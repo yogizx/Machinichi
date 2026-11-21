@@ -306,9 +306,14 @@ export default function ProductListing({ onAdminLogout, favoriteProducts = new S
     const ids = filteredProducts.map(p => p._id).filter(Boolean).join(",");
     if (!ids) return;
     let es;
+    let cancelled = false;
+    (async () => {
     try {
+      // The stream is admin-only: a short-lived ticket is fetched with the normal authenticated request first.
+      const { data: ticketRes } = await API.post("/realtime/product-analytics/ticket");
+      if (cancelled || !ticketRes?.ticket) return;
       const base = (import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "https://machinichi-backend.onrender.com/api" : "http://localhost:3000/api")).replace(/\/api\/?$/, "");
-      es = new EventSource(`${base}/api/realtime/product-analytics/stream?ids=${ids}`);
+      es = new EventSource(`${base}/api/realtime/product-analytics/stream?ids=${ids}&ticket=${encodeURIComponent(ticketRes.ticket)}`);
       es.onmessage = async (e) => {
         try {
           const payload = JSON.parse(e.data);
@@ -321,7 +326,8 @@ export default function ProductListing({ onAdminLogout, favoriteProducts = new S
       };
       es.onerror = () => { es?.close(); };
     } catch {}
-    return () => { try { es?.close(); } catch {} };
+    })();
+    return () => { cancelled = true; try { es?.close(); } catch {} };
   }, [isDetailedView, filteredProducts.map(p => p._id).join(",")]);
 
   const normalizeVariantImages = (imagesArr) => {

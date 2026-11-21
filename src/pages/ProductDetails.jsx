@@ -32,6 +32,7 @@ import {
   Zap,
 } from "lucide-react";
 import api from "../services/api";
+import SellerInfoCard from "../components/SellerInfoCard";
 
 // Visual image assets matching the reference image presentation
 const mainCookieBoxImage =
@@ -76,6 +77,25 @@ function ProductDetails({
   const [apiProduct, setApiProduct] = useState(null);
   const [relatedProductsApi, setRelatedProductsApi] = useState([]);
   const [trendingProductsApi, setTrendingProductsApi] = useState([]);
+
+  // Brand shown in Product Highlights = Brand Name saved in /admin/profile -> Store Information.
+  // Defaults to "Machinichi" when the admin has not entered one.
+  const [storeBrandName, setStoreBrandName] = useState("Machinichi");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/user/store-info");
+        const name = typeof data?.brandName === "string" ? data.brandName.trim() : "";
+        if (!cancelled && name) setStoreBrandName(name);
+      } catch {
+        /* keep the default "Machinichi" */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (state?.product) {
@@ -960,6 +980,9 @@ function ProductDetails({
               </div>
             </div>
 
+            {/* Seller: store name, rating and time on the platform (multi-vendor) */}
+            <SellerInfoCard productId={selected._id || selected.id} />
+
             {/* Wishlist & Save for Later & Easy Returns */}
             <div className="mt-5 flex flex-wrap items-center gap-7 text-sm font-bold text-[#111111]">
               <button
@@ -1031,7 +1054,7 @@ function ProductDetails({
               <div className="flex items-center gap-2.5">
                 <span className="text-lg">🏷️</span> <span className="text-gray-500 font-semibold">Brand</span>
               </div>
-              <div>{product.productHighlights?.brand || product.brand || "—"}</div>
+              <div>{storeBrandName}</div>
 
               <div className="flex items-center gap-2.5">
                 <span className="text-lg">🍪</span> <span className="text-gray-500 font-semibold">Type</span>

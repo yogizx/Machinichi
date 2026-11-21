@@ -1,6 +1,7 @@
 import mongoose, { Schema } from 'mongoose';
 import { randomUUID } from 'crypto';
 import './Category';
+import { getTenant } from '../utils/tenantContext';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 function slugify(input: string): string {
@@ -69,6 +70,9 @@ export interface IProduct extends mongoose.Document {
   // ─ DB standards ─
   uuid: string;
   version: number;
+  // ─ Multi-vendor ─
+  // Business (approved vendor store) that owns this product. Empty = sold by Machinichi itself.
+  vendor?: mongoose.Types.ObjectId;
   // ─ Basic ─
   name: string;
   slug: string;
@@ -357,6 +361,9 @@ const productSchema = new Schema<IProduct>({
   uuid: { type: String, default: () => randomUUID(), unique: true, index: true },
   version: { type: Number, default: 0 },
 
+  // Multi-vendor: owning Business (vendor store). Unset = Machinichi's own product.
+  vendor: { type: Schema.Types.ObjectId, ref: 'Business', index: true },
+
   // Basic
   name: { type: String, required: true, trim: true },
   slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
@@ -630,6 +637,8 @@ productSchema.index({ totalSales: -1 });
 productSchema.index({ createdAt: -1 });
 productSchema.index({ isDeleted: 1, publishStatus: 1 });
 productSchema.index({ isDeleted: 1, createdAt: -1 });
+// multi-vendor
+productSchema.index({ vendor: 1, isDeleted: 1, createdAt: -1 });
 // enterprise
 productSchema.index({ name: 1, brand: 1 }, { unique: true });
 productSchema.index({ barcode: 1 }, { unique: true, sparse: true });
@@ -665,6 +674,13 @@ productSchema.virtual('profitMargin').get(function (this: IProduct) {
 
 // ─── Pre-save hooks ────────────────────────────────────────────────
 productSchema.pre('validate', function () {
+  // multi-vendor: a product created inside a vendor request always belongs to that vendor
+  if (this.isNew) {
+    const tenant = getTenant();
+    if (tenant?.vendorId) {
+      (this as any).vendor = new mongoose.Types.ObjectId(tenant.vendorId);
+    }
+  }
   // auto slug
   if (!this.slug && this.name) {
     this.slug = slugify(this.name);

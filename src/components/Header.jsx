@@ -1,15 +1,41 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
-import { Bookmark, Heart, Menu, Mic, MicOff, Search, ShoppingCart, User, X } from "lucide-react";
+import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Bookmark, ChevronDown, Heart, Menu, Mic, MicOff, Search, ShoppingCart, User, X } from "lucide-react";
+import api from "../services/api";
 import logo from "../pages/images/machinichi.png";
 import SearchDropdown from "./search/SearchDropdown";
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
+// Active link = orange pill with a soft glow (design system: Primary / brand orange).
+const navLinkClass = ({ isActive }) =>
+  `inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-2 transition-all duration-200 xl:px-3 2xl:px-[18px] ${
+    isActive
+      ? "bg-[#fd761a] font-bold text-white shadow-[0_6px_18px_rgba(253,118,26,0.4)]"
+      : "font-medium text-white/90 hover:bg-white/10 hover:text-white"
+  }`;
+
+// Orange count bubble on the top-right corner of the heart / bookmark / cart icons.
+// Renders nothing when the count is 0, so the bubble only appears once something has been added.
+function CountBadge({ count, animate = false }) {
+  if (!count || count <= 0) return null;
+  return (
+    <span
+      key={animate ? count : undefined}
+      className={`absolute -right-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-gradient-to-b from-[#ff8a3d] to-[#fd761a] px-1 text-[11px] font-extrabold leading-none text-white shadow-[0_2px_6px_rgba(0,0,0,0.3)] ${
+        animate ? "animate-[cartBadgeBounce_500ms_ease-out]" : ""
+      }`}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
 function Header({ cartCount = 0, favoriteCount = 0, savedCount = 0, onCartClick }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [navCategories, setNavCategories] = useState([]);
   const recognitionRef = useRef(null);
   const navigate = useNavigate();
 
@@ -17,6 +43,22 @@ function Header({ cartCount = 0, favoriteCount = 0, savedCount = 0, onCartClick 
     const onScroll = () => setScrolled(window.scrollY > 10);
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Categories for the "Categories" dropdown
+  useEffect(() => {
+    let mounted = true;
+    api
+      .get("/categories")
+      .then(({ data }) => {
+        if (mounted && data?.success && Array.isArray(data.data)) {
+          setNavCategories(data.data.filter((item) => item.isActive !== false));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const toggleVoiceSearch = useCallback(() => {
@@ -48,47 +90,89 @@ function Header({ cartCount = 0, favoriteCount = 0, savedCount = 0, onCartClick 
     };
   }, []);
 
+  const iconButton =
+    "relative flex h-9 w-9 items-center justify-center text-white transition-all duration-200 hover:scale-110 sm:h-10 sm:w-10 lg:h-9 lg:w-9 xl:h-[42px] xl:w-[42px]";
+
   return (
     <>
-      <header className={`sticky top-0 z-50 w-full shrink-0 border-b border-[#3b1f13] bg-[#5a3322] transition-shadow duration-300 ease-out ${scrolled ? "shadow-[0_8px_24px_rgba(45,22,12,0.22)]" : "shadow-none"}`}>
-        <div className="relative mx-auto flex h-[68px] w-full max-w-[1390px] items-center justify-between px-4 sm:h-[82px] sm:px-6 lg:px-[54px]">
-          <NavLink
-            aria-label="Machinichi home"
-            className="flex shrink-0 items-center gap-2 sm:gap-3"
-            to="/"
-          >
+      <header
+        className={`sticky top-0 z-50 w-full shrink-0 border-b border-[#3b1f13] bg-[linear-gradient(90deg,#321304_0%,#4a2616_55%,#5a3322_100%)] transition-shadow duration-300 ease-out ${
+          scrolled ? "shadow-[0_8px_24px_rgba(45,22,12,0.22)]" : "shadow-none"
+        }`}
+      >
+        <div className="relative flex h-[68px] w-full max-w-full items-center justify-between gap-3 px-4 sm:h-[76px] sm:px-6 lg:gap-4 lg:px-6 xl:px-8 2xl:px-[44px]">
+          <NavLink aria-label="Machinichi home" className="flex shrink-0 items-center gap-2.5 sm:gap-3" to="/">
             <img
               alt="Machinichi logo"
-              className="h-[38px] w-auto shrink-0 object-contain sm:h-[48px] lg:h-[54px]"
+              className="h-[40px] w-auto shrink-0 object-contain sm:h-[48px] lg:h-[46px] xl:h-[52px] 2xl:h-[58px]"
               src={logo}
             />
-            <span className="hidden text-[17px] font-black tracking-[-0.035em] text-white sm:block sm:text-[20px] lg:text-[22px]">
-              Machinichi
+            <span className="hidden flex-col sm:flex">
+              <span className="font-display text-[22px] font-black leading-none tracking-[-0.02em] text-white sm:text-[24px] lg:text-[22px] xl:text-[28px] 2xl:text-[32px]">
+                Machinichi
+              </span>
+              <span className="mt-1 hidden whitespace-nowrap text-[10px] font-semibold tracking-[0.1em] text-white/85 xl:block 2xl:text-[11px]">
+                The Modern General Store
+              </span>
             </span>
           </NavLink>
 
-          <div className="hidden items-center lg:flex lg:flex-1 lg:justify-center lg:gap-6 xl:gap-10">
-            <nav className="flex items-center gap-1 text-[14px] font-semibold xl:gap-1.5 xl:text-[15px]">
-              <NavLink className={({isActive}) => `rounded-lg px-3 py-1.5 transition-all duration-200 ${isActive ? "bg-white/15 text-white font-bold" : "text-white/70 hover:text-white hover:bg-white/10"}`} end to="/">Home</NavLink>
-              <NavLink className={({isActive}) => `rounded-lg px-3 py-1.5 transition-all duration-200 ${isActive ? "bg-white/15 text-white font-bold" : "text-white/70 hover:text-white hover:bg-white/10"}`} to="/about">About</NavLink>
-              <NavLink className={({isActive}) => `rounded-lg px-3 py-1.5 transition-all duration-200 ${isActive ? "bg-white/15 text-white font-bold" : "text-white/70 hover:text-white hover:bg-white/10"}`} to="/categories">Categories</NavLink>
-              <NavLink className={({isActive}) => `rounded-lg px-3 py-1.5 transition-all duration-200 ${isActive ? "bg-white/15 text-white font-bold" : "text-white/70 hover:text-white hover:bg-white/10"}`} to="/product">Product</NavLink>
-              <NavLink className={({isActive}) => `rounded-lg px-3 py-1.5 transition-all duration-200 ${isActive ? "bg-white/15 text-white font-bold" : "text-white/70 hover:text-white hover:bg-white/10"}`} to="/bulk">Bulk</NavLink>
-              <NavLink className={({isActive}) => `rounded-lg px-3 py-1.5 transition-all duration-200 ${isActive ? "bg-white/15 text-white font-bold" : "text-white/70 hover:text-white hover:bg-white/10"}`} to="/contact">Contact</NavLink>
+          <div className="hidden min-w-0 items-center lg:flex lg:flex-1 lg:justify-center lg:gap-3 xl:gap-5 2xl:gap-8">
+            <nav className="flex shrink-0 items-center gap-0.5 text-[13.5px] xl:gap-1.5 xl:text-[15px] 2xl:gap-2 2xl:text-[16px]">
+              <NavLink className={navLinkClass} end to="/">Home</NavLink>
+              <NavLink className={navLinkClass} to="/about">About</NavLink>
+
+              {/* Categories with hover / keyboard-focus dropdown */}
+              <div className="group relative">
+                <NavLink className={navLinkClass} to="/categories">
+                  Categories
+                  <ChevronDown
+                    aria-hidden="true"
+                    className="transition-transform duration-200 group-hover:rotate-180 group-focus-within:rotate-180"
+                    size={15}
+                    strokeWidth={2.6}
+                  />
+                </NavLink>
+                <div className="invisible absolute left-0 top-full z-50 pt-3 opacity-0 transition-all duration-200 group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
+                  <div className="max-h-[70vh] w-[250px] overflow-y-auto rounded-2xl bg-white p-2 shadow-[0_20px_48px_rgba(0,0,0,0.16)]">
+                    <Link
+                      className="block rounded-xl px-3.5 py-2.5 text-[14px] font-bold text-[#fd761a] transition hover:bg-[#fff1e4]"
+                      to="/categories"
+                    >
+                      All Categories
+                    </Link>
+                    {navCategories.map((item) => (
+                      <Link
+                        key={item._id}
+                        className="block truncate rounded-xl px-3.5 py-2.5 text-[14px] font-semibold text-[#27201c] transition hover:bg-[#fff1e4] hover:text-[#ad4d00]"
+                        to={`/product?category=${encodeURIComponent(item.name)}`}
+                      >
+                        {item.name}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <NavLink className={navLinkClass} to="/product">Products</NavLink>
+              <NavLink className={navLinkClass} to="/bulk">Bulk Orders</NavLink>
+              <NavLink className={navLinkClass} to="/contact">Contact</NavLink>
             </nav>
 
-            <div className="relative w-[200px] xl:w-[260px]">
+            <span aria-hidden="true" className="hidden h-9 w-px shrink-0 bg-white/25 xl:block" />
+
+            <div className="relative w-full min-w-[130px] max-w-[270px] flex-1">
               <SearchDropdown onClose={() => {}} />
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-0.5 text-white sm:gap-1.5 lg:gap-2">
+          <div className="flex shrink-0 items-center gap-0.5 text-white sm:gap-1 lg:gap-1 xl:gap-2.5">
             <button
               aria-label="Search"
               className="flex h-[38px] w-[38px] items-center justify-center text-white/90 transition-all duration-200 hover:scale-110 hover:text-white lg:hidden"
               onClick={() => navigate("/product")}
             >
-              <Search size={18} strokeWidth={2.4} />
+              <Search size={20} strokeWidth={2} />
             </button>
             {SpeechRecognition && (
               <button
@@ -96,59 +180,32 @@ function Header({ cartCount = 0, favoriteCount = 0, savedCount = 0, onCartClick 
                 className={`flex h-[38px] w-[38px] items-center justify-center transition-all duration-200 lg:hidden ${isListening ? "text-[#fd761a] animate-pulse" : "text-white/90 hover:scale-110 hover:text-white"}`}
                 onClick={toggleVoiceSearch}
               >
-                {isListening ? <MicOff size={18} strokeWidth={2.4} /> : <Mic size={18} strokeWidth={2.4} />}
+                {isListening ? <MicOff size={20} strokeWidth={2} /> : <Mic size={20} strokeWidth={2} />}
               </button>
             )}
 
-            <NavLink
-              aria-label={`Favorites with ${favoriteCount} items`}
-              className="relative flex h-[38px] w-[38px] items-center justify-center text-white/90 transition-all duration-200 hover:-translate-y-0.5 hover:scale-110 hover:text-white sm:h-[40px] sm:w-[40px]"
-              to="/favouite"
-            >
-              <Heart size={18} strokeWidth={2.4} />
-              {favoriteCount > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 grid h-[16px] min-w-[16px] place-items-center rounded-full bg-[#f7e6cf] px-[3px] text-[10px] font-black leading-none text-[#4b2819] shadow-sm">
-                  {favoriteCount}
-                </span>
-              )}
+            <NavLink aria-label={`Favorites with ${favoriteCount} items`} className={iconButton} to="/favouite">
+              <Heart size={24} strokeWidth={1.9} />
+              <CountBadge count={favoriteCount} />
             </NavLink>
 
-            <NavLink
-              aria-label={`Saved products with ${savedCount} items`}
-              className="relative hidden h-[38px] w-[38px] items-center justify-center text-white/90 transition-all duration-200 hover:-translate-y-0.5 hover:scale-110 hover:text-white sm:flex sm:h-[40px] sm:w-[40px]"
-              to="/saveproduct"
-            >
-              <Bookmark size={18} strokeWidth={2.4} />
-              {savedCount > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 grid h-[16px] min-w-[16px] place-items-center rounded-full bg-[#f7e6cf] px-[3px] text-[10px] font-black leading-none text-[#4b2819] shadow-sm">
-                  {savedCount}
-                </span>
-              )}
+            <NavLink aria-label={`Saved products with ${savedCount} items`} className={iconButton} to="/saveproduct">
+              <Bookmark size={24} strokeWidth={1.9} />
+              <CountBadge count={savedCount} />
             </NavLink>
 
             <button
               aria-label={`Cart with ${cartCount} items`}
-              className="relative flex h-[38px] w-[38px] items-center justify-center text-white/90 transition-all duration-200 hover:scale-110 hover:text-white sm:h-[40px] sm:w-[40px]"
+              className={iconButton}
               onClick={onCartClick}
               data-cart-icon
             >
-              <ShoppingCart size={18} strokeWidth={2.4} />
-              {cartCount > 0 && (
-                <span
-                  key={cartCount}
-                  className="absolute -right-1 -top-1 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-[#f7e6cf] px-[3px] text-[10px] font-black leading-none text-[#4b2819] shadow-[0_2px_4px_rgba(0,0,0,0.2)] animate-[cartBadgeBounce_500ms_ease-out]"
-                >
-                  {cartCount}
-                </span>
-              )}
+              <ShoppingCart size={24} strokeWidth={1.9} />
+              <CountBadge count={cartCount} animate />
             </button>
 
-            <NavLink
-              aria-label="Profile"
-              className="hidden h-[38px] w-[38px] items-center justify-center text-white/90 transition-all duration-200 hover:scale-110 hover:text-white sm:flex sm:h-[40px] sm:w-[40px]"
-              to="/profile"
-            >
-              <User size={18} strokeWidth={2.4} />
+            <NavLink aria-label="Profile" className={iconButton} to="/profile">
+              <User size={24} strokeWidth={1.9} />
             </NavLink>
 
             <button
@@ -164,14 +221,14 @@ function Header({ cartCount = 0, favoriteCount = 0, savedCount = 0, onCartClick 
 
       {/* Mobile Navigation Drawer */}
       {menuOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
+        <div className="fixed inset-0 z-50 lg:hidden">
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => setMenuOpen(false)}
           />
           <div className="absolute right-0 top-0 h-full w-[300px] max-w-[85vw] bg-[#321304] shadow-2xl animate-slideInRight">
             <div className="flex items-center justify-between border-b border-[#5a3322] px-6 py-5">
-              <span className="text-[18px] font-black text-white">Menu</span>
+              <span className="font-display text-[20px] font-black text-white">Menu</span>
               <button
                 onClick={() => setMenuOpen(false)}
                 className="flex h-[44px] w-[44px] items-center justify-center text-white/80 hover:text-white"
@@ -185,7 +242,7 @@ function Header({ cartCount = 0, favoriteCount = 0, savedCount = 0, onCartClick 
               <MobileNavLink to="/" onClick={() => setMenuOpen(false)}>Home</MobileNavLink>
               <MobileNavLink to="/about" onClick={() => setMenuOpen(false)}>About</MobileNavLink>
               <MobileNavLink to="/categories" onClick={() => setMenuOpen(false)}>Categories</MobileNavLink>
-              <MobileNavLink to="/product" onClick={() => setMenuOpen(false)}>Product</MobileNavLink>
+              <MobileNavLink to="/product" onClick={() => setMenuOpen(false)}>Products</MobileNavLink>
               <MobileNavLink to="/bulk" onClick={() => setMenuOpen(false)}>Bulk Orders</MobileNavLink>
               <MobileNavLink to="/contact" onClick={() => setMenuOpen(false)}>Contact</MobileNavLink>
             </nav>
@@ -212,7 +269,7 @@ function MobileNavLink({ to, onClick, children }) {
       className={({ isActive }) =>
         `rounded-xl px-4 py-3 text-[16px] font-bold transition ${
           isActive
-            ? "bg-[#5a3322] text-white"
+            ? "bg-[#fd761a] text-white"
             : "text-[#f7e6cf]/84 hover:bg-[#5a3322]/60 hover:text-white"
         }`
       }

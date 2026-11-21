@@ -6,6 +6,9 @@ import CartDrawer from "./components/CartDrawer";
 import FlyToCart from "./components/FlyToCart";
 
 const AdminDashboard = lazy(() => import("./admin/pages/AdminDashboard"));
+const SubAdminManagement = lazy(() => import("./admin/pages/SubAdminManagement"));
+const RoleManagement = lazy(() => import("./admin/pages/RoleManagement"));
+const Unauthorized = lazy(() => import("./pages/Unauthorized"));
 
 const formatINR = (num) => {
   if (num == null || num <= 0) return "₹0";
@@ -24,6 +27,11 @@ const ProductListing = lazy(() => import("./admin/pages/ProductListing"));
 const OffersCoupons = lazy(() => import("./admin/pages/OffersCoupons"));
 const ReturnRequest = lazy(() => import("./admin/pages/ReturnRequest"));
 const Bannerimage = lazy(() => import("./admin/pages/Bannerimage"));
+// Multi-vendor
+const VendorLogin = lazy(() => import("./vendor/pages/VendorLogin"));
+const VendorChangePassword = lazy(() => import("./vendor/pages/VendorChangePassword"));
+const VendorDashboard = lazy(() => import("./vendor/pages/VendorDashboard"));
+const VendorApply = lazy(() => import("./pages/VendorApply"));
 const Footer = lazy(() => import("./components/Footer"));
 const Header = lazy(() => import("./components/Header"));
 import { ToasterProvider } from "./components/Toaster";
@@ -124,7 +132,7 @@ function RequireAuth({ isSignedIn, authLoading, children }) {
 }
 
 function AppLayout() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const navigate = useNavigate();
 
   const [isSignedIn, setIsSignedIn] = useState(() => {
@@ -135,6 +143,10 @@ function AppLayout() {
 
   const [isAdminSignedIn, setIsAdminSignedIn] = useState(false);
   const [adminAuthLoading, setAdminAuthLoading] = useState(true);
+
+  // Multi-vendor: a signed-in vendor, and whether the e-mailed temporary password is still in use
+  const [isVendorSignedIn, setIsVendorSignedIn] = useState(false);
+  const [vendorMustChangePassword, setVendorMustChangePassword] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -147,6 +159,15 @@ function AppLayout() {
           setUserId(data.user._id || data.user.id || null);
           if (data.user.role === "admin" || data.user.role === "super_admin") {
             setIsAdminSignedIn(true);
+          }
+          if (data.user.role === "vendor") {
+            setIsVendorSignedIn(true);
+            try {
+              const vendorRes = await api.get("/vendor/auth/me", { timeout: 5000 });
+              setVendorMustChangePassword(!!vendorRes.data?.user?.mustChangePassword);
+            } catch {
+              // not fatal: the vendor API itself still enforces the password change
+            }
           }
           try {
             const cartRes = await api.get("/cart");
@@ -269,10 +290,10 @@ function AppLayout() {
 
   const isAdminLoginPage = pathname === "/admin/login" || pathname === "/admin-login";
   const isAdminRoute = pathname.startsWith("/admin/") || pathname === "/admin-login";
+  const isVendorRoute = pathname === "/vendor" || pathname.startsWith("/vendor/");
 
   const cartCount = cartItems.reduce((total, item) => total + item.quantity, 0);
   const favoriteCount = favoriteProducts.size;
-  const savedCount = savedProducts.length;
 
   const addToCart = async (product, quantity = 1, sourceElement = null) => {
     if (!product) return;
@@ -476,15 +497,39 @@ function AppLayout() {
     setUserId(null);
     setIsAdminSignedIn(false);
   };
+  const completeVendorLogin = (mustChangePassword = false) => {
+    setIsSignedIn(true);
+    setIsVendorSignedIn(true);
+    setVendorMustChangePassword(!!mustChangePassword);
+  };
+  const completeVendorLogout = () => {
+    api.post("/vendor/auth/logout").catch(() => {});
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
+    localStorage.removeItem("machinichi_cart");
+    setCartItems([]);
+    setUserId(null);
+    setIsSignedIn(false);
+    setIsVendorSignedIn(false);
+    setVendorMustChangePassword(false);
+  };
 
   useEffect(() => {
     const handleUnauthorized = () => {
       completeSignOut();
       completeAdminLogout();
+      setIsVendorSignedIn(false);
+      setVendorMustChangePassword(false);
     };
     window.addEventListener("unauthorized", handleUnauthorized);
     return () => window.removeEventListener("unauthorized", handleUnauthorized);
   }, []);
+
+  // A vendor who lands on an /admin/* address (e.g. a link inside a re-used page) is sent to the
+  // matching /vendor/* page instead of the admin login.
+  if (isAdminRoute && isVendorSignedIn && !isAdminSignedIn && !isAdminLoginPage) {
+    return <Navigate to={`${pathname.replace(/^\/admin\//, "/vendor/")}${search}`} replace />;
+  }
 
   if (isAdminRoute) {
     if (adminAuthLoading) return <LoadingScreen />;
@@ -497,6 +542,9 @@ function AppLayout() {
           <Route path="/admin/login" element={<Adminlogin onAdminLogin={completeAdminLogin} />} />
           <Route path="/admin-login" element={<Adminlogin onAdminLogin={completeAdminLogin} />} />
           <Route path="/admin/dashboard" element={<AdminDashboard onAdminLogout={completeAdminLogout} />} />
+          <Route path="/admin/sub-admins" element={<SubAdminManagement />} />
+          <Route path="/admin/roles" element={<RoleManagement />} />
+          <Route path="/admin/unauthorized" element={<Unauthorized />} />
           <Route path="/admin/profile" element={<Adminprofile onAdminLogout={completeAdminLogout} />} />
           <Route path="/admin/customers" element={<Customers onAdminLogout={completeAdminLogout} />} />
           <Route path="/admin/categories" element={<AdminCategories onAdminLogout={completeAdminLogout} />} />
@@ -509,6 +557,42 @@ function AppLayout() {
           <Route path="/admin/offers-coupons" element={<OffersCoupons onAdminLogout={completeAdminLogout} />} />
           <Route path="/admin/create-offers" element={<Createoffers onAdminLogout={completeAdminLogout} />} />
           <Route path="/admin/banner-images" element={<Bannerimage onAdminLogout={completeAdminLogout} />} />
+        </Routes>
+      </Suspense>
+    );
+  }
+
+  // Vendor panel: dashboard, inventory, product listing, return requests, offers & coupons.
+  // The inventory / listing / returns / offers pages are the admin pages, served by the vendor API
+  // (see services/vendorApiRouting.js), so a vendor only sees and changes their own data.
+  if (isVendorRoute) {
+    if (authLoading) return <LoadingScreen />;
+    const onVendorLoginPage = pathname === "/vendor/login";
+    if (!isVendorSignedIn && !onVendorLoginPage) {
+      return <Navigate to="/vendor/login" replace />;
+    }
+    if (isVendorSignedIn && vendorMustChangePassword && pathname !== "/vendor/change-password") {
+      return <Navigate to="/vendor/change-password" replace />;
+    }
+    return (
+      <Suspense fallback={<LoadingScreen />}>
+        <Routes>
+          <Route
+            path="/vendor/login"
+            element={
+              isVendorSignedIn && !vendorMustChangePassword
+                ? <Navigate to="/vendor/dashboard" replace />
+                : <VendorLogin onVendorLogin={completeVendorLogin} />
+            }
+          />
+          <Route path="/vendor/change-password" element={<VendorChangePassword onChanged={() => setVendorMustChangePassword(false)} />} />
+          <Route path="/vendor/dashboard" element={<VendorDashboard onAdminLogout={completeVendorLogout} />} />
+          <Route path="/vendor/inventory" element={<Inventory onAdminLogout={completeVendorLogout} />} />
+          <Route path="/vendor/product-listing" element={<ProductListing onAdminLogout={completeVendorLogout} favoriteProducts={favoriteProducts} />} />
+          <Route path="/vendor/return-request" element={<ReturnRequest onAdminLogout={completeVendorLogout} />} />
+          <Route path="/vendor/offers-coupons" element={<OffersCoupons onAdminLogout={completeVendorLogout} />} />
+          <Route path="/vendor/create-offers" element={<Createoffers onAdminLogout={completeVendorLogout} />} />
+          <Route path="*" element={<Navigate to="/vendor/dashboard" replace />} />
         </Routes>
       </Suspense>
     );
@@ -533,7 +617,6 @@ function AppLayout() {
             <Header
               cartCount={cartCount}
               favoriteCount={favoriteCount}
-              savedCount={savedCount}
               onCartClick={handleCartClick}
             />
           </Suspense>
@@ -550,6 +633,7 @@ function AppLayout() {
               <Route path="/contact" element={<Contact />} />
               <Route path="/consultation" element={<Consultation />} />
               <Route path="/partnership" element={<Partnership />} />
+              <Route path="/become-a-vendor" element={<VendorApply />} />
               <Route path="/privacy-policy" element={<PrivacyPolicy />} />
               <Route path="/terms-conditions" element={<TermsConditions />} />
               <Route path="/refund-policy" element={<RefundPolicy />} />

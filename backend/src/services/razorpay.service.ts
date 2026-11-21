@@ -18,22 +18,34 @@ export const createRazorpayOrder = async (amount: number, currency = 'INR', rece
   return order;
 };
 
+// Constant-time comparison of two hex signatures (avoids leaking how many leading characters matched).
+const signaturesMatch = (expected: string, received: unknown): boolean => {
+  if (typeof received !== 'string') return false;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(received);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+
 export const verifyPaymentSignature = (
   orderId: string,
   paymentId: string,
   signature: string
 ): boolean => {
   const secret = process.env.RAZORPAY_KEY_SECRET || '';
+  if (!secret) return false; // never "verify" against an empty key
   const expected = crypto
     .createHmac('sha256', secret)
     .update(`${orderId}|${paymentId}`)
     .digest('hex');
-  return expected === signature;
+  return signaturesMatch(expected, signature);
 };
 
-export const verifyWebhookSignature = (body: string, signature: string, secret: string): boolean => {
+// `body` must be the EXACT bytes Razorpay sent (not re-serialised JSON), and the secret must be set:
+// an empty secret would let anybody compute a "valid" signature.
+export const verifyWebhookSignature = (body: string | Buffer, signature: string, secret: string): boolean => {
+  if (!secret) return false;
   const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
-  return expected === signature;
+  return signaturesMatch(expected, signature);
 };
 
 export const capturePayment = async (paymentId: string, amount: number) => {

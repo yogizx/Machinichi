@@ -290,7 +290,9 @@ export const login = async (req: Request, res: Response): Promise<any> => {
       else if (/^\d{10}$/.test(compact)) query = { phone: { $regex: `${compact}$` } }; // digits only: safe
     }
 
-    const user = query ? await User.findOne({ ...query, provider: 'local' }).select('+password') : null;
+    // Sub-admins sign in ONLY through the admin portal (password + authenticator code). Excluding them here
+    // means this endpoint can never be used to skip the second factor.
+    const user = query ? await User.findOne({ ...query, provider: 'local', role: { $ne: 'sub_admin' } }).select('+password') : null;
 
     if (!user) {
       // Same amount of work as a real check, so response time does not reveal which accounts exist.
@@ -350,7 +352,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<any> 
   try {
     const cleanEmail: string = req.body.email;
 
-    const user = await User.findOne({ email: cleanEmail, provider: 'local' });
+    const user = await User.findOne({ email: cleanEmail, provider: 'local', role: { $ne: 'sub_admin' } });
     if (!user) return res.status(200).json(genericReply);
 
     // Max 3 reset e-mails per account per hour (extra requests are silently ignored).
@@ -399,6 +401,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<any> =
     const user = await User.findOne({
       passwordResetToken: hashedToken,
       passwordResetExpires: { $gt: new Date() },
+      role: { $ne: 'sub_admin' }, // sub-admins recover their password through the admin portal flow
     }).select('+password');
 
     if (!user) {
@@ -438,6 +441,10 @@ export const refreshTokens = async (req: Request, res: Response): Promise<any> =
     if (!refreshToken) return res.status(401).json({ message: 'Refresh token not found' });
 
     const tokenDoc = await verifyRefreshToken(refreshToken);
+    if ((tokenDoc.user as any)?.role === 'sub_admin') {
+      await revokeRefreshToken(refreshToken);
+      return res.status(401).json({ message: 'Invalid or expired refresh token' });
+    }
     await revokeRefreshToken(refreshToken);
 
     const { accessToken, refreshToken: newRefreshToken } = await generateAuthTokens(

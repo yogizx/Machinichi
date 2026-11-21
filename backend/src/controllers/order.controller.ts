@@ -185,17 +185,31 @@ export const getOrderById = async (req: AuthRequest, res: Response, next: NextFu
     if (!order) return sendError(res, 'Order not found', 404);
 
     if (req.params.orderId) {
-      // Public tracking endpoint — return limited fields for guest access
+      // Public tracking endpoint. SECURITY: order numbers are guessable (MAC-40086, MAC-40087, ...), so personal
+      // details are only returned to the order's owner or an admin. Everybody else gets status + a masked name.
+      const ownerId = String((order.userId as any)?._id || order.userId || '');
+      const canSeePersonalDetails = !!req.user?.userId && (req.user.isAdmin || req.user.userId === ownerId);
+      const maskName = (name?: string) =>
+        name
+          ? String(name).trim().split(/\s+/).map((part) => part[0] + '*'.repeat(Math.max(part.length - 1, 1))).join(' ')
+          : 'Customer';
+      const addr: any = (order as any).shippingAddress?.toObject?.() || (order as any).shippingAddress || {};
+      const publicShippingAddress = { fullName: maskName(addr.fullName), city: addr.city, state: addr.state };
+      const safeStatusHistory = ((order.statusHistory as any[]) || []).map((h: any) => {
+        const { updatedBy, ...rest } = h?.toObject?.() || h || {};
+        return rest;
+      });
+
       return sendSuccess(res, {
         data: {
           orderId: order.orderId,
           status: order.status,
           orderStatus: order.orderStatus,
-          statusHistory: order.statusHistory,
+          statusHistory: safeStatusHistory,
           estimatedDelivery: order.estimatedDelivery,
           delayHistory: order.delayHistory,
           items: order.items.map(i => ({ name: i.name, image: i.image, quantity: i.quantity, sku: i.sku })),
-          shippingAddress: order.shippingAddress,
+          shippingAddress: canSeePersonalDetails ? order.shippingAddress : publicShippingAddress,
           trackingNumber: order.trackingNumber,
           courierName: order.courierName,
           deliveredAt: order.deliveredAt,

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
-import { authMiddleware, adminMiddleware } from '../middlewares/auth.middleware';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { requirePermission, requireAnyPermission } from '../middlewares/permission.middleware';
 import {
   getActiveBanners,
   getAllBanners,
@@ -9,7 +10,15 @@ import {
   deleteBanner,
   reorderBanners,
 } from '../controllers/banner.controller';
+import {
+  getActivePopup,
+  getPopupAdmin,
+  savePopup,
+  deletePopup,
+  uploadPopupImage,
+} from '../controllers/popup.controller';
 import { uploadDisk } from '../middlewares/upload.middleware';
+import { getTrustBar, saveTrustBar } from '../controllers/trustBar.controller';
 import { cloudinary, isCloudinaryConfigured, CLOUDINARY_FOLDERS } from '../config/cloudinary';
 import sharp from 'sharp';
 import fs from 'fs';
@@ -20,21 +29,32 @@ const router = Router();
 // Public route to fetch only active banners
 router.get('/active', getActiveBanners);
 
+// Home page popup (declared before the '/:id' routes so 'popup' is never read as a banner id)
+router.get('/popup/active', getActivePopup);
+router.get('/popup', authMiddleware, requirePermission('content.homepage.view'), getPopupAdmin);
+router.put('/popup', authMiddleware, requirePermission('content.homepage.edit'), savePopup);
+router.delete('/popup', authMiddleware, requirePermission('content.homepage.edit'), deletePopup);
+router.post('/popup/upload', authMiddleware, requirePermission('content.homepage.edit'), uploadDisk.single('file'), uploadPopupImage);
+
+// Banner highlights bar ("100% Natural", "Pan India Delivery" ...) - also declared before '/:id'
+router.get('/trust-bar', getTrustBar);
+router.put('/trust-bar', authMiddleware, requirePermission('content.homepage.edit'), saveTrustBar);
+
 // Protected Admin CRUD operations
-router.get('/all', authMiddleware, adminMiddleware, getAllBanners);
+router.get('/all', authMiddleware, requirePermission('marketing.banner.view'), getAllBanners);
 router.get('/:id', getBannerById);
-router.post('/', authMiddleware, adminMiddleware, createBanner);
-router.put('/:id', authMiddleware, adminMiddleware, updateBanner);
-router.delete('/:id', authMiddleware, adminMiddleware, deleteBanner);
+router.post('/', authMiddleware, requirePermission('marketing.banner.create'), createBanner);
+router.put('/:id', authMiddleware, requirePermission('marketing.banner.edit'), updateBanner);
+router.delete('/:id', authMiddleware, requirePermission('marketing.banner.delete'), deleteBanner);
 
 // Secure bulk reorder route
-router.patch('/reorder', authMiddleware, adminMiddleware, reorderBanners);
+router.patch('/reorder', authMiddleware, requirePermission('marketing.banner.edit'), reorderBanners);
 
 // Secure image uploader that processes uploaded images to WebP and JPEG fallback formats
 router.post(
   '/upload',
   authMiddleware,
-  adminMiddleware,
+  requireAnyPermission(['marketing.banner.create', 'marketing.banner.edit']),
   uploadDisk.single('file'),
   async (req: Request, res: Response): Promise<any> => {
     try {

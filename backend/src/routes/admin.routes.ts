@@ -2,6 +2,12 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { Types } from 'mongoose';
 import { authMiddleware, adminMiddleware } from '../middlewares/auth.middleware';
 import {
+  requirePermission,
+  requireAnyPermission,
+  requireStaffAccount,
+  enforceGuardedRoutes,
+} from '../middlewares/permission.middleware';
+import {
   createProduct, updateProduct, deleteProduct, getAdminProducts, getAdminProductById,
   bulkUpdateStock, getInventoryLogs, getInventoryOverview, updateInventory,
   listProduct, unlistProduct, updateListing,
@@ -41,82 +47,95 @@ const validateObjectId = (paramName: string) => (req: Request, res: Response, ne
   next();
 };
 
-router.use(authMiddleware, adminMiddleware);
+/**
+ * Access model for /api/admin/*
+ *  - authMiddleware identifies the caller (and rejects suspended / expired / revoked / non-MFA sub-admins)
+ *  - requireStaffAccount keeps customers and vendors out
+ *  - EVERY route below carries its own permission guard. enforceGuardedRoutes() makes registering a route
+ *    without one a start-up error, so a forgotten guard can never expose an endpoint (deny by default).
+ *  - Super Admin / Admin pass every guard (unchanged behaviour). Sub-admins pass only with the exact permission.
+ *  - adminMiddleware = "full administrators only" is used for the few endpoints that are not delegable.
+ */
+router.use(authMiddleware, requireStaffAccount);
+enforceGuardedRoutes(router, 'admin.routes');
 
-router.get('/dashboard', getDashboardStats);
-router.get('/revenue', getRevenueAnalytics);
-router.get('/top-products', getTopProducts);
-router.get('/orders', getOrderStats);
-router.get('/users', getUserAnalytics);
-router.get('/categories', getCategoryDistribution);
+const inventoryView = requireAnyPermission(['inventory.view', 'product.inventory.view']);
+const inventoryUpdate = requireAnyPermission(['inventory.update', 'product.inventory.update']);
+
+// ── Dashboard ──
+router.get('/dashboard', requirePermission('report.view'), getDashboardStats);
+router.get('/revenue', requirePermission('report.view'), getRevenueAnalytics);
+router.get('/top-products', requirePermission('report.view'), getTopProducts);
+router.get('/orders', requirePermission('report.view'), getOrderStats);
+router.get('/users', requireAnyPermission(['report.view', 'report.analytics']), getUserAnalytics);
+router.get('/categories', requirePermission('report.view'), getCategoryDistribution);
 
 // Step 1 — catalog (create/edit product info; never touches publish state)
-router.get('/products', getAdminProducts);
-router.get('/products/:id', validateObjectId('id'), getAdminProductById);
-router.get('/products/:id/users', validateObjectId('id'), getProductUsers);
-router.post('/products', createProduct);
-router.put('/products/:id', validateObjectId('id'), updateProduct);
-router.delete('/products/:id', validateObjectId('id'), deleteProduct);
+router.get('/products', requirePermission('product.view'), getAdminProducts);
+router.get('/products/:id', requirePermission('product.view'), validateObjectId('id'), getAdminProductById);
+router.get('/products/:id/users', requirePermission('product.view'), validateObjectId('id'), getProductUsers);
+router.post('/products', requirePermission('product.create'), createProduct);
+router.put('/products/:id', requirePermission('product.edit'), validateObjectId('id'), updateProduct);
+router.delete('/products/:id', requirePermission('product.delete'), validateObjectId('id'), deleteProduct);
 
 // Step 2 — inventory (separate screen/workflow from listing)
-router.get('/inventory', getInventoryOverview);
-router.patch('/products/:id/inventory', validateObjectId('id'), updateInventory);
-router.post('/products/bulk-stock', bulkUpdateStock);
-router.get('/products/:productId/inventory-logs', validateObjectId('productId'), getInventoryLogs);
+router.get('/inventory', inventoryView, getInventoryOverview);
+router.patch('/products/:id/inventory', inventoryUpdate, validateObjectId('id'), updateInventory);
+router.post('/products/bulk-stock', inventoryUpdate, bulkUpdateStock);
+router.get('/products/:productId/inventory-logs', inventoryView, validateObjectId('productId'), getInventoryLogs);
 
 // Step 3 & 5 — listing / publish ("Add Product to Store")
-router.post('/products/:id/list', validateObjectId('id'), listProduct);
-router.post('/products/:id/unlist', validateObjectId('id'), unlistProduct);
-router.patch('/products/:id/listing', validateObjectId('id'), updateListing);
+router.post('/products/:id/list', requirePermission('product.publish'), validateObjectId('id'), listProduct);
+router.post('/products/:id/unlist', requirePermission('product.publish'), validateObjectId('id'), unlistProduct);
+router.patch('/products/:id/listing', requirePermission('product.publish'), validateObjectId('id'), updateListing);
 
-// Supplier management routes
-router.get('/suppliers', getSuppliers);
-router.get('/suppliers/:id', validateObjectId('id'), getSupplierById);
-router.post('/suppliers', createSupplier);
-router.put('/suppliers/:id', validateObjectId('id'), updateSupplier);
-router.delete('/suppliers/:id', validateObjectId('id'), deleteSupplier);
+// Supplier management routes (inventory domain)
+router.get('/suppliers', requirePermission('inventory.view'), getSuppliers);
+router.get('/suppliers/:id', requirePermission('inventory.view'), validateObjectId('id'), getSupplierById);
+router.post('/suppliers', requirePermission('inventory.update'), createSupplier);
+router.put('/suppliers/:id', requirePermission('inventory.update'), validateObjectId('id'), updateSupplier);
+router.delete('/suppliers/:id', requirePermission('inventory.update'), validateObjectId('id'), deleteSupplier);
 
 // Product ↔ Supplier linking
-router.post('/products/:id/suppliers', validateObjectId('id'), addSupplierToProduct);
-router.delete('/products/:id/suppliers/:supplierId', validateObjectId('id'), validateObjectId('supplierId'), removeSupplierFromProduct);
+router.post('/products/:id/suppliers', requirePermission('inventory.update'), validateObjectId('id'), addSupplierToProduct);
+router.delete('/products/:id/suppliers/:supplierId', requirePermission('inventory.update'), validateObjectId('id'), validateObjectId('supplierId'), removeSupplierFromProduct);
 
 // Purchase history
-router.get('/products/:productId/purchase-history', validateObjectId('productId'), getPurchaseHistory);
-router.post('/products/:id/purchase-history', validateObjectId('id'), addPurchaseRecord);
+router.get('/products/:productId/purchase-history', requirePermission('inventory.view'), validateObjectId('productId'), getPurchaseHistory);
+router.post('/products/:id/purchase-history', requirePermission('inventory.update'), validateObjectId('id'), addPurchaseRecord);
 
 // Customers management routes
-router.get('/customers', getAdminCustomers);
-router.post('/customers', createAdminCustomer);
+router.get('/customers', requirePermission('customer.view'), getAdminCustomers);
+router.post('/customers', requirePermission('customer.create'), createAdminCustomer);
 
 // AI content generation
-router.post('/ai/generate', generateAIContent);
+router.post('/ai/generate', requireAnyPermission(['product.create', 'product.edit']), generateAIContent);
 
-// Tasks management routes
-router.get('/tasks', getTasks);
-router.post('/tasks', createTask);
-router.put('/tasks/:id', validateObjectId('id'), updateTaskStatus);
-router.delete('/tasks/:id', validateObjectId('id'), deleteTask);
+// Tasks management routes — personal admin to-dos, not delegable: full administrators only
+router.get('/tasks', adminMiddleware, getTasks);
+router.post('/tasks', adminMiddleware, createTask);
+router.put('/tasks/:id', adminMiddleware, validateObjectId('id'), updateTaskStatus);
+router.delete('/tasks/:id', adminMiddleware, validateObjectId('id'), deleteTask);
 
 // Analytics dashboard page routes
-router.get('/analytics-page', getAnalyticsPageData);
-router.post('/analytics-page/export', exportAnalyticsReport);
-router.get('/analytics-page/live-feed', getLiveFeedStats);
-router.post('/analytics-page/report-config', saveReportConfig);
-router.get('/analytics-page/report-config', getReportConfig);
-router.post('/analytics-page/settings', saveAnalyticsSettings);
-router.get('/analytics-page/settings', getAnalyticsSettings);
+router.get('/analytics-page', requirePermission('report.analytics'), getAnalyticsPageData);
+router.post('/analytics-page/export', requirePermission('report.export'), exportAnalyticsReport);
+router.get('/analytics-page/live-feed', requirePermission('report.analytics'), getLiveFeedStats);
+router.post('/analytics-page/report-config', requirePermission('report.settings'), saveReportConfig);
+router.get('/analytics-page/report-config', requirePermission('report.analytics'), getReportConfig);
+router.post('/analytics-page/settings', requirePermission('report.settings'), saveAnalyticsSettings);
+router.get('/analytics-page/settings', requirePermission('report.analytics'), getAnalyticsSettings);
 
 // Regional analytics routes — state-wise breakdown driven entirely by MongoDB
-// NOTE: auth + adminMiddleware already applied via router.use() above
-router.get('/regional/overview', getRegionalOverview);
-router.get('/regional/states/top', getTopStates);
-router.get('/regional/states/bottom', getBottomStates);
-router.get('/regional/states/aov', getStateAOV);
-router.get('/regional/states/repeat-rates', getStateRepeatRates);
-router.get('/regional/states', getStatesList);
-router.get('/regional/states/:stateName/trends', getStateMonthlyTrends);
-router.get('/regional/states/:stateName/growth', getStateGrowth);
-router.get('/regional/states/:stateName', getStateDetail);
-router.get('/regional/export/csv', exportRegionalCSV);
+router.get('/regional/overview', requirePermission('report.analytics'), getRegionalOverview);
+router.get('/regional/states/top', requirePermission('report.analytics'), getTopStates);
+router.get('/regional/states/bottom', requirePermission('report.analytics'), getBottomStates);
+router.get('/regional/states/aov', requirePermission('report.analytics'), getStateAOV);
+router.get('/regional/states/repeat-rates', requirePermission('report.analytics'), getStateRepeatRates);
+router.get('/regional/states', requirePermission('report.analytics'), getStatesList);
+router.get('/regional/states/:stateName/trends', requirePermission('report.analytics'), getStateMonthlyTrends);
+router.get('/regional/states/:stateName/growth', requirePermission('report.analytics'), getStateGrowth);
+router.get('/regional/states/:stateName', requirePermission('report.analytics'), getStateDetail);
+router.get('/regional/export/csv', requirePermission('report.export'), exportRegionalCSV);
 
 export default router;

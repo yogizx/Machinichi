@@ -1,4 +1,6 @@
 import { Coupon } from '../models/Coupon';
+import { Product } from '../models/Product';
+import { User } from '../models/User';
 
 export type ScratchRuleBasis = 'quantity' | 'order_amount';
 export type ScratchRuleDiscountType = 'Percentage' | 'Fixed';
@@ -21,6 +23,7 @@ export interface ScratchReward {
   discountValue: number;
   discountAmount: number;
   matchedRule: ScratchRuleLike;
+  isDefault?: boolean;
 }
 
 export interface FreeDeliveryOffer {
@@ -170,6 +173,40 @@ export const pickBestScratchReward = (
   return rewards[0];
 };
 
+// Default scratch card used on /checkout when the admin has NOT created any live scratch card offer.
+export const DEFAULT_SCRATCH_PERCENT = 3;
+
+export const hasLiveScratchOffer = (coupons: any[]): boolean =>
+  (coupons || []).some((coupon) => coupon.offerType === 'scratch_card' && isCouponLive(coupon, new Date()));
+
+export const buildDefaultScratchReward = (orderAmount: number): ScratchReward | null => {
+  if (!(orderAmount > 0)) return null;
+  const discountAmount = Math.min(roundMoney((orderAmount * DEFAULT_SCRATCH_PERCENT) / 100), orderAmount);
+  if (discountAmount <= 0) return null;
+  return {
+    couponId: '',
+    code: 'DEFAULT3',
+    name: 'Default Scratch Offer',
+    description: `${DEFAULT_SCRATCH_PERCENT}% off your order`,
+    label: `${DEFAULT_SCRATCH_PERCENT}% OFF on your order`,
+    discountType: 'Percentage',
+    discountValue: DEFAULT_SCRATCH_PERCENT,
+    discountAmount,
+    matchedRule: { basis: 'order_amount', threshold: 0, discountType: 'Percentage', discountValue: DEFAULT_SCRATCH_PERCENT },
+    isDefault: true,
+  };
+};
+
+// Admin scratch card offers drive the reward. Only when the admin has none live does the 3% default apply.
+export const resolveScratchRewardWithDefault = (
+  coupons: any[],
+  context: { totalQuantity: number; orderAmount: number }
+): ScratchReward | null => {
+  const reward = pickBestScratchReward(coupons, context);
+  if (reward) return reward;
+  return hasLiveScratchOffer(coupons) ? null : buildDefaultScratchReward(context.orderAmount);
+};
+
 export const resolveFreeDeliveryOffer = (coupons: any[], district?: string | null): FreeDeliveryOffer | null => {
   const live = (coupons || []).filter((coupon) => isCouponLive(coupon, new Date()));
 
@@ -204,6 +241,141 @@ export const resolveFreeDeliveryOffer = (coupons: any[], district?: string | nul
 
 export const isOfferLive = (coupon: any, now = new Date()): boolean => isCouponLive(coupon, now);
 
+/* ───────────── Vendor-scoped offers ─────────────
+ * An offer created from the vendor dashboard belongs to that vendor's store: it only discounts the vendor's own
+ * products in the cart. Offers without a vendor (created by admin) apply to the whole cart as before.
+ */
+
+export interface OfferCartItem {
+  productId: string;
+  vendor?: string | null; // the store (Business) that owns the product
+  quantity: number;
+  lineTotal: number;
+}
+
+export const VENDOR_OFFER_ONLY_MESSAGE =
+  'This offer is valid only on products from the store that created it, and your cart has none of them.';
+export const VENDOR_FREE_DELIVERY_MESSAGE =
+  'This free delivery offer is valid only when every item in your cart is from the store that created it.';
+
+// The store an offer belongs to. Offers made before the vendor field existed are traced through their creator.
+export const getCouponVendorId = async (coupon: any): Promise<string | null> => {
+  if (!coupon) return null;
+  if (coupon.vendor) return String(coupon.vendor);
+  if (coupon.createdBy) {
+    const creator: any = await User.findById(coupon.createdBy).select('role businessId').lean();
+    if (creator?.role === 'vendor' && creator.businessId) return String(creator.businessId);
+  }
+  return null;
+};
+
+export interface VendorOfferScope {
+  scoped: boolean;        // true when the offer is limited to its owner's products (a vendor's store, or the admin's own products)
+  orderAmount: number;    // amount the offer may discount (only the owner's own items when scoped)
+  totalQuantity: number;  // quantity the offer may count (only the owner's own items when scoped)
+  eligibleCount: number;  // how many cart lines belong to the offer's owner
+  allEligible: boolean;   // every cart line belongs to the offer's owner
+}
+
+// An offer applies only to products of whoever created it: a vendor's offer to that vendor's products, an admin's
+// offer to the admin's own products (products that have no vendor).
+export const scopeOfferToCart = async (
+  coupon: any,
+  items: OfferCartItem[] | undefined,
+  totals: { orderAmount: number; totalQuantity: number },
+): Promise<VendorOfferScope> => {
+  const vendorId = await getCouponVendorId(coupon);
+  // Admin offer while the cart lines are unknown (older client): nothing to scope by, totals are used as given.
+  if (!vendorId && !items) {
+    return { scoped: false, orderAmount: totals.orderAmount, totalQuantity: totals.totalQuantity, eligibleCount: 0, allEligible: true };
+  }
+  // Vendor offers fail closed: when the cart lines are unknown, a vendor offer matches nothing.
+  const own = (items ?? []).filter((item) => (item.vendor ? String(item.vendor) : null) === vendorId);
+  return {
+    scoped: true,
+    orderAmount: roundMoney(own.reduce((sum, item) => sum + (Number(item.lineTotal) || 0), 0)),
+    totalQuantity: own.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+    eligibleCount: own.length,
+    allEligible: !!items && items.length > 0 && own.length === items.length,
+  };
+};
+
+// Cart lines (productId + quantity + price) -> offer lines, with the owning store read from the product itself,
+// never from anything the browser sent.
+export const buildOfferCartItems = async (
+  rows: Array<{ productId: any; quantity: number; sellingPrice?: number; lineTotal?: number }>,
+): Promise<OfferCartItem[]> => {
+  const ids = Array.from(new Set(rows.map((row) => String(row.productId))));
+  const products = ids.length ? await Product.find({ _id: { $in: ids } }).select('vendor').lean() : [];
+  const vendorById = new Map<string, string | null>(
+    products.map((product: any) => [String(product._id), product.vendor ? String(product.vendor) : null]),
+  );
+  return rows.map((row) => {
+    const quantity = Number(row.quantity) || 0;
+    return {
+      productId: String(row.productId),
+      vendor: vendorById.get(String(row.productId)) ?? null,
+      quantity,
+      lineTotal: row.lineTotal != null ? Number(row.lineTotal) : (Number(row.sellingPrice) || 0) * quantity,
+    };
+  });
+};
+
+// Keeps only the offers that can apply to this cart: vendor offers need at least one of that vendor's products
+// (a vendor free-delivery offer needs the whole cart to be that vendor's).
+export const filterOffersForCart = async (coupons: any[], items: OfferCartItem[] | undefined): Promise<any[]> => {
+  const result: any[] = [];
+  for (const coupon of coupons || []) {
+    const scope = await scopeOfferToCart(coupon, items, { orderAmount: 0, totalQuantity: 0 });
+    if (!scope.scoped) { result.push(coupon); continue; }
+    if (scope.eligibleCount === 0) continue;
+    if (coupon.discountType === 'Free Delivery' && !scope.allEligible) continue;
+    result.push(coupon);
+  }
+  return result;
+};
+
+// Same ranking as pickBestScratchReward, but a vendor's scratch card is worked out on that vendor's items only.
+export const pickBestScratchRewardForCart = async (
+  coupons: any[],
+  items: OfferCartItem[] | undefined,
+  totals: { totalQuantity: number; orderAmount: number },
+): Promise<ScratchReward | null> => {
+  const rewards: ScratchReward[] = [];
+  for (const coupon of coupons || []) {
+    if (coupon.offerType !== 'scratch_card') continue;
+    const scope = await scopeOfferToCart(coupon, items, totals);
+    if (scope.scoped && scope.eligibleCount === 0) continue;
+    const reward = resolveScratchReward(coupon, { totalQuantity: scope.totalQuantity, orderAmount: scope.orderAmount });
+    if (reward) rewards.push(reward);
+  }
+  if (rewards.length === 0) return null;
+  rewards.sort((a, b) => {
+    if (b.discountAmount !== a.discountAmount) return b.discountAmount - a.discountAmount;
+    if (b.discountValue !== a.discountValue) return b.discountValue - a.discountValue;
+    return String(a.couponId).localeCompare(String(b.couponId));
+  });
+  return rewards[0];
+};
+
+// Only admin scratch cards switch the 3% default off; a single vendor's scratch card must not do that for everyone.
+export const hasLiveAdminScratchOffer = async (coupons: any[]): Promise<boolean> => {
+  for (const coupon of coupons || []) {
+    if (coupon.offerType === 'scratch_card' && isCouponLive(coupon, new Date()) && !(await getCouponVendorId(coupon))) return true;
+  }
+  return false;
+};
+
+export const resolveScratchRewardWithDefaultForCart = async (
+  coupons: any[],
+  items: OfferCartItem[] | undefined,
+  totals: { totalQuantity: number; orderAmount: number },
+): Promise<ScratchReward | null> => {
+  const reward = await pickBestScratchRewardForCart(coupons, items, totals);
+  if (reward) return reward;
+  return (await hasLiveAdminScratchOffer(coupons)) ? null : buildDefaultScratchReward(totals.orderAmount);
+};
+
 export interface AppliedOfferResolution {
   coupon: any | null;
   scratchReward: ScratchReward | null;
@@ -217,6 +389,8 @@ export const resolveAppliedOffer = async (input: {
   district?: string | null;
   totalQuantity: number;
   orderAmount: number;
+  // The cart lines (with their owning store). Needed for vendor offers, which only discount that vendor's items.
+  items?: OfferCartItem[];
 }): Promise<AppliedOfferResolution> => {
   const empty: AppliedOfferResolution = {
     coupon: null,
@@ -233,11 +407,19 @@ export const resolveAppliedOffer = async (input: {
   if (!coupon) return { ...empty, error: 'This offer could not be found' };
   if (!isOfferLive(coupon)) return { ...empty, coupon, error: 'This offer is no longer active' };
 
+  // A vendor's offer only counts that vendor's own items (and needs at least one of them in the cart).
+  const scope = await scopeOfferToCart(coupon, input.items, {
+    orderAmount: input.orderAmount,
+    totalQuantity: input.totalQuantity,
+  });
+  if (scope.scoped && scope.eligibleCount === 0) {
+    return { ...empty, coupon, error: VENDOR_OFFER_ONLY_MESSAGE };
+  }
+  const orderAmount = scope.orderAmount;
+  const totalQuantity = scope.totalQuantity;
+
   if (coupon.offerType === 'scratch_card') {
-    const reward = resolveScratchReward(coupon, {
-      totalQuantity: input.totalQuantity,
-      orderAmount: input.orderAmount,
-    });
+    const reward = resolveScratchReward(coupon, { totalQuantity, orderAmount });
     if (!reward) {
       return { ...empty, coupon, error: 'This scratch card offer does not match your cart' };
     }
@@ -245,6 +427,10 @@ export const resolveAppliedOffer = async (input: {
   }
 
   if (coupon.discountType === 'Free Delivery') {
+    // Free delivery waives shipping for the whole order, so a vendor's offer needs the whole cart to be theirs.
+    if (scope.scoped && !scope.allEligible) {
+      return { ...empty, coupon, error: VENDOR_FREE_DELIVERY_MESSAGE };
+    }
     if (!isDistrictEligible(coupon.freeDeliveryDistricts, input.district)) {
       return {
         coupon,
@@ -257,7 +443,7 @@ export const resolveAppliedOffer = async (input: {
     return { coupon, scratchReward: null, freeDelivery: true, discountAmount: 0, error: null };
   }
 
-  if (coupon.minOrderAmount > 0 && input.orderAmount < coupon.minOrderAmount) {
+  if (coupon.minOrderAmount > 0 && orderAmount < coupon.minOrderAmount) {
     return {
       ...empty,
       coupon,
@@ -265,7 +451,7 @@ export const resolveAppliedOffer = async (input: {
     };
   }
 
-  if (coupon.minQuantity > 0 && input.totalQuantity < coupon.minQuantity) {
+  if (coupon.minQuantity > 0 && totalQuantity < coupon.minQuantity) {
     return {
       ...empty,
       coupon,
@@ -273,14 +459,14 @@ export const resolveAppliedOffer = async (input: {
     };
   }
 
-  const raw = (input.orderAmount * Math.min(Number(coupon.discountValue) || 0, 100)) / 100;
+  const raw = (orderAmount * Math.min(Number(coupon.discountValue) || 0, 100)) / 100;
   const capped = coupon.maxDiscountAmount ? Math.min(raw, coupon.maxDiscountAmount) : raw;
 
   return {
     coupon,
     scratchReward: null,
     freeDelivery: false,
-    discountAmount: roundMoney(Math.min(capped, input.orderAmount)),
+    discountAmount: roundMoney(Math.min(capped, orderAmount)),
     error: null,
   };
 };

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authMiddleware } from '../middlewares/auth.middleware';
+import { requirePermission } from '../middlewares/permission.middleware';
 import {
   getCoupons,
   getActiveCoupons,
@@ -8,15 +9,14 @@ import {
   updateCoupon,
   deleteCoupon,
 } from '../controllers/coupon.controller';
-import { adminMiddleware } from '../middlewares/auth.middleware';
 
 const router = Router();
 
 router.get('/active', getActiveCoupons);
-router.get('/', authMiddleware, adminMiddleware, getCoupons);
-router.get('/:id', authMiddleware, adminMiddleware, getCouponById);
-router.post('/', authMiddleware, adminMiddleware, createCoupon);
-router.put('/:id', authMiddleware, adminMiddleware, updateCoupon);
-router.delete('/:id', authMiddleware, adminMiddleware, deleteCoupon);
+router.get('/', authMiddleware, requirePermission('marketing.coupon.view'), getCoupons);
+router.get('/:id', authMiddleware, requirePermission('marketing.coupon.view'), getCouponById);
+router.post('/', authMiddleware, requirePermission('marketing.coupon.create'), createCoupon);
+router.put('/:id', authMiddleware, requirePermission('marketing.coupon.edit'), updateCoupon);
+router.delete('/:id', authMiddleware, requirePermission('marketing.coupon.delete'), deleteCoupon);
 
 export default router;

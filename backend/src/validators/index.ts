@@ -590,6 +590,7 @@ export const createDirectPaymentOrderSchema = z.object({
   discountType: z.string().optional(),
   }).optional(),
   scratchCouponId: objectIdSchema.optional(),
+  scratchDefault: z.boolean().optional(),
   scratchDiscountAmount: z.number().nonnegative().optional().default(0),
 });
 
@@ -732,6 +733,14 @@ export const evaluateOffersSchema = z.object({
   totalQuantity: z.number().int().nonnegative().optional().default(0),
   district: z.string().trim().max(80).optional(),
   couponCode: z.string().trim().max(20).optional(),
+  // The cart lines. The store that owns each product is read from the product on the server, so a vendor's
+  // offer can be limited to that vendor's own products.
+  items: z.array(z.object({
+    productId: objectIdSchema,
+    quantity: z.number().int().positive(),
+    sellingPrice: z.number().nonnegative().optional(),
+    lineTotal: z.number().nonnegative().optional(),
+  })).optional(),
 });
 
 // ─── Return Request ─────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middlewares/auth.middleware';
+import { requirePermission, elevateWhenPermitted } from '../middlewares/permission.middleware';
 import {
   createReturnRequest,
   checkEligibility,
@@ -23,7 +24,6 @@ import {
   refundReturnRequest,
   addReturnNote,
 } from '../controllers/return.controller';
-import { adminMiddleware } from '../middlewares/auth.middleware';
 import upload from '../middlewares/upload.middleware';
 
 const router = Router();
@@ -48,26 +48,30 @@ router.get('/eligible-orders', authMiddleware, getEligibleOrders);
 router.post('/eligibility', authMiddleware, checkEligibility);
 router.get('/my-requests', authMiddleware, getMyReturnRequests);
 
-/* Admin */
-router.get('/admin/stats', authMiddleware, adminMiddleware, getReturnStats);
-router.get('/admin/all', authMiddleware, adminMiddleware, getAllReturnRequests);
-router.post('/:id/review', authMiddleware, adminMiddleware, moveToReview);
-router.post('/:id/approve', authMiddleware, adminMiddleware, approveReturn);
-router.post('/:id/reject', authMiddleware, adminMiddleware, rejectReturn);
-router.post('/:id/schedule-pickup', authMiddleware, adminMiddleware, schedulePickup);
-router.post('/:id/pickup-failed', authMiddleware, adminMiddleware, markPickupFailed);
-router.post('/:id/confirm-receipt', authMiddleware, adminMiddleware, confirmReceipt);
-router.post('/:id/inspect', authMiddleware, adminMiddleware, inspectReturn);
-router.post('/:id/process-refund', authMiddleware, adminMiddleware, processRefund);
-router.post('/:id/refund', authMiddleware, adminMiddleware, refundReturnRequest);
-router.post('/:id/refund-failed', authMiddleware, adminMiddleware, markRefundFailed);
-router.post('/:id/complete', authMiddleware, adminMiddleware, completeReturn);
-router.post('/:id/notes', authMiddleware, adminMiddleware, addReturnNote);
+/* Admin — viewing */
+router.get('/admin/stats', authMiddleware, requirePermission('order.return.view'), getReturnStats);
+router.get('/admin/all', authMiddleware, requirePermission('order.return.view'), getAllReturnRequests);
+
+/* Admin — handling a return (review → approve/reject → pickup → inspect → complete) */
+router.post('/:id/review', authMiddleware, requirePermission('order.return.manage'), moveToReview);
+router.post('/:id/approve', authMiddleware, requirePermission('order.return.manage'), approveReturn);
+router.post('/:id/reject', authMiddleware, requirePermission('order.return.manage'), rejectReturn);
+router.post('/:id/schedule-pickup', authMiddleware, requirePermission('order.return.manage'), schedulePickup);
+router.post('/:id/pickup-failed', authMiddleware, requirePermission('order.return.manage'), markPickupFailed);
+router.post('/:id/confirm-receipt', authMiddleware, requirePermission('order.return.manage'), confirmReceipt);
+router.post('/:id/inspect', authMiddleware, requirePermission('order.return.manage'), inspectReturn);
+router.post('/:id/complete', authMiddleware, requirePermission('order.return.manage'), completeReturn);
+router.post('/:id/notes', authMiddleware, requirePermission('order.return.manage'), addReturnNote);
+
+/* Admin — money going back to the customer needs its own permission */
+router.post('/:id/process-refund', authMiddleware, requirePermission('order.refund'), processRefund);
+router.post('/:id/refund', authMiddleware, requirePermission('order.refund'), refundReturnRequest);
+router.post('/:id/refund-failed', authMiddleware, requirePermission('order.refund'), markRefundFailed);
 
 /* Shared (auth-checked inside controller) */
-router.get('/:id', authMiddleware, getReturnById);
+router.get('/:id', authMiddleware, elevateWhenPermitted(['order.return.view']), getReturnById);
 router.post('/', authMiddleware, createReturnRequest);
-router.put('/status/:id', authMiddleware, adminMiddleware, updateReturnStatus);
+router.put('/status/:id', authMiddleware, requirePermission('order.return.manage'), updateReturnStatus);
 router.put('/cancel/:id', authMiddleware, cancelReturnRequest);
 
 export default router;

@@ -10,11 +10,13 @@ import {
   PackageCheck,
   PlusCircle,
   RotateCcw,
+  Shield,
   Tags,
   UserRound,
+  Users,
   UsersRound,
 } from "lucide-react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import logo from "../images/machinichi.png";
 
 const menuItems = [
@@ -83,23 +85,46 @@ const menuItems = [
     icon: PlusCircle,
     to: "/admin/create-offers",
   },
+  {
+    label: "Staff & Access",
+    icon: Users,
+    to: "/admin/sub-admins",
+  },
+  {
+    label: "Roles",
+    icon: Shield,
+    to: "/admin/roles",
+  },
+];
+
+// Vendor panel: only the pages a vendor is allowed to use.
+const vendorMenuItems = [
+  { label: "Dashboard", icon: LayoutDashboard, to: "/vendor/dashboard" },
+  { label: "Inventory", icon: Boxes, to: "/vendor/inventory" },
+  { label: "Product Listing", icon: PackageCheck, to: "/vendor/product-listing" },
+  { label: "Return Request", icon: RotateCcw, to: "/vendor/return-request" },
+  { label: "Offers & Coupons", icon: BadgePercent, to: "/vendor/offers-coupons" },
+  { label: "Create Offers", icon: PlusCircle, to: "/vendor/create-offers" },
 ];
 
 function AdminSidebar({ onAdminLogout }) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const isVendor = pathname.startsWith("/vendor");
+  const items = isVendor ? vendorMenuItems : menuItems;
 
   const handleLogout = () => {
     onAdminLogout?.();
-    navigate("/admin/login");
+    navigate(isVendor ? "/vendor/login" : "/admin/login");
   };
 
   return (
     <aside className="sticky top-0 z-20 flex w-full flex-col border-b border-[#ead9cc] bg-[#fffaf5] text-[#2d1a10] shadow-[0_10px_28px_rgba(64,35,17,0.08)] md:h-screen md:w-[280px] md:min-w-[280px] md:border-b-0 md:border-r">
       <div className="border-b border-[#ead9cc] px-5 py-5 md:px-6">
         <NavLink
-          aria-label="Machinichi admin dashboard"
+          aria-label={isVendor ? "Machinichi vendor dashboard" : "Machinichi admin dashboard"}
           className="flex items-center gap-4 rounded-[10px] p-2 transition duration-300 hover:bg-[#f5ebe2]"
-          to="/admin/dashboard"
+          to={isVendor ? "/vendor/dashboard" : "/admin/dashboard"}
         >
           <span className="grid h-[86px] w-[86px] shrink-0 place-items-center overflow-hidden rounded-[14px] border border-[#1f130d] bg-black shadow-[0_16px_28px_rgba(0,0,0,0.18)]">
             <img
@@ -114,17 +139,17 @@ function AdminSidebar({ onAdminLogout }) {
               Machinichi
             </span>
             <span className="mt-1 block text-[12px] font-black uppercase tracking-[0.12em] text-[#a04a0c]">
-              Admin Panel
+              {isVendor ? "Vendor Panel" : "Admin Panel"}
             </span>
           </span>
         </NavLink>
       </div>
 
       <nav
-        aria-label="Admin navigation"
+        aria-label={isVendor ? "Vendor navigation" : "Admin navigation"}
         className="flex gap-2 overflow-x-auto px-4 py-4 md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto md:px-5 md:py-6"
       >
-        {menuItems.map(({ label, icon: Icon, to }) => (
+        {items.map(({ label, icon: Icon, to }) => (
           <NavLink
             className={({ isActive }) =>
               `group flex h-12 shrink-0 items-center gap-3 rounded-[8px] px-4 text-[14px] font-black tracking-[-0.01em] transition duration-300 md:w-full ${

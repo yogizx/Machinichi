@@ -1,11 +1,23 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middlewares/auth.middleware';
-import { authorize } from '../middlewares/rbac.middleware';
+import { requireAnyPermission } from '../middlewares/permission.middleware';
 import upload from '../middlewares/upload.middleware';
 import pdfUpload from '../middlewares/pdfUpload.middleware';
 import { isCloudinaryConfigured, CLOUDINARY_FOLDERS } from '../config/cloudinary';
 
 const router = Router();
+
+// Who may upload files through the admin panel: administrators, and sub-admins that can create or edit something
+// that carries images (products, banners, categories, homepage content).
+const canUpload = requireAnyPermission([
+  'product.create',
+  'product.edit',
+  'marketing.banner.create',
+  'marketing.banner.edit',
+  'content.category.create',
+  'content.category.edit',
+  'content.homepage.edit',
+]);
 
 // Always build the public URL from a fixed, configured origin — never from
 // the incoming request's Host header. Using req.get('host') meant an upload
@@ -27,7 +39,7 @@ function resolvePublicUrl(file: Express.Multer.File): string {
 router.post(
   '/',
   authMiddleware,
-  authorize('admin', 'super_admin'),
+  canUpload,
   upload.single('file'),
   (req: Request, res: Response) => {
     if (!req.file) {
@@ -51,7 +63,7 @@ router.post(
 router.post(
   '/pdf',
   authMiddleware,
-  authorize('admin', 'super_admin'),
+  canUpload,
   pdfUpload.single('file'),
   (req: Request, res: Response) => {
     if (!req.file) {

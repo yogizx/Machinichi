@@ -13,12 +13,19 @@ import { sendOrderConfirmationNotifications } from '../services/notification.ser
 import { bulkRecordPurchases } from '../services/analytics.service';
 import {
   buildFreeDeliveryRejectionMessage,
+  buildOfferCartItems,
+  filterOffersForCart,
   getActiveOfferCoupons,
   isDistrictEligible,
-  pickBestScratchReward,
+  OfferCartItem,
+  pickBestScratchRewardForCart,
   resolveAppliedOffer,
   resolveFreeDeliveryOffer,
   resolveScratchReward,
+  resolveScratchRewardWithDefaultForCart,
+  scopeOfferToCart,
+  VENDOR_FREE_DELIVERY_MESSAGE,
+  VENDOR_OFFER_ONLY_MESSAGE,
 } from '../services/offer.service';
 
 export const mapAddressForDb = (addr: any) => {
@@ -50,7 +57,7 @@ export const getCheckoutSummary = async (req: AuthRequest, res: Response, next: 
     const cart = await Cart.findOne({ userId: new Types.ObjectId(req.user.userId) })
       .populate({
         path: 'items.productId',
-        select: 'name slug images sellingPrice mrp quantity variants gstRate hsnCode isActive',
+        select: 'name slug images sellingPrice mrp quantity variants gstRate hsnCode isActive vendor',
       });
 
     if (!cart || cart.items.length === 0) {
@@ -83,9 +90,16 @@ export const getCheckoutSummary = async (req: AuthRequest, res: Response, next: 
     const totalDiscount = totalMrp - subtotal;
     const { cgst, sgst, igst, totalGst } = calculateOrderTax(items, true);
     const totalQuantity = items.reduce((sum: number, item: any) => sum + item.quantity, 0);
+    // Which store owns each line: vendor offers only discount their own vendor's items.
+    const offerItems: OfferCartItem[] = validItems.map((item: any, index: number) => ({
+      productId: String(item.productId._id),
+      vendor: item.productId.vendor ? String(item.productId.vendor) : null,
+      quantity: items[index].quantity,
+      lineTotal: items[index].lineTotal,
+    }));
     const activeCoupons = await getActiveOfferCoupons();
-    const scratchReward = pickBestScratchReward(activeCoupons, { totalQuantity, orderAmount: subtotal });
-    const freeDelivery = resolveFreeDeliveryOffer(activeCoupons, null);
+    const scratchReward = await pickBestScratchRewardForCart(activeCoupons, offerItems, { totalQuantity, orderAmount: subtotal });
+    const freeDelivery = resolveFreeDeliveryOffer(await filterOffersForCart(activeCoupons, offerItems), null);
     const shippingCharges = freeDelivery?.districtMatched ? 0 : subtotal >= 500 ? 0 : 40;
 
     sendSuccess(res, {
@@ -125,17 +139,27 @@ export const evaluateOffers = async (req: AuthRequest, res: Response, next: Next
       return sendError(res, 'Validation failed', 400, validation.error.issues);
     }
 
-    const { orderAmount, totalQuantity, district, couponCode } = validation.data;
+    const { orderAmount, totalQuantity, district, couponCode, items } = validation.data;
     const activeCoupons = await getActiveOfferCoupons();
+    // The cart lines (store read from each product on the server). Without them a vendor's offer cannot apply.
+    const offerItems = items?.length ? await buildOfferCartItems(items) : undefined;
 
-    const scratchReward = pickBestScratchReward(activeCoupons, { totalQuantity, orderAmount });
-    const freeDelivery = resolveFreeDeliveryOffer(activeCoupons, district);
+    const scratchReward = await resolveScratchRewardWithDefaultForCart(activeCoupons, offerItems, { totalQuantity, orderAmount });
+    const freeDelivery = resolveFreeDeliveryOffer(await filterOffersForCart(activeCoupons, offerItems), district);
 
     let coupon: any = null;
     if (couponCode) {
       const requested = activeCoupons.find((item) => item.code === couponCode.toUpperCase());
       if (!requested) {
         return sendError(res, 'Invalid or expired coupon', 400);
+      }
+      // A vendor's offer only applies to that vendor's own products.
+      const scope = await scopeOfferToCart(requested, offerItems, { orderAmount, totalQuantity });
+      if (scope.scoped && scope.eligibleCount === 0) {
+        return sendError(res, VENDOR_OFFER_ONLY_MESSAGE, 400);
+      }
+      if (scope.scoped && requested.discountType === 'Free Delivery' && !scope.allEligible) {
+        return sendError(res, VENDOR_FREE_DELIVERY_MESSAGE, 400);
       }
       if (requested.discountType === 'Free Delivery') {
         if (!isDistrictEligible(requested.freeDeliveryDistricts, district)) {
@@ -151,7 +175,7 @@ export const evaluateOffers = async (req: AuthRequest, res: Response, next: Next
           freeDelivery: true,
         };
       } else if (requested.offerType === 'scratch_card') {
-        const reward = resolveScratchReward(requested, { totalQuantity, orderAmount });
+        const reward = resolveScratchReward(requested, { totalQuantity: scope.totalQuantity, orderAmount: scope.orderAmount });
         if (!reward) {
           return sendError(res, 'This scratch card offer does not match your cart', 400);
         }
@@ -162,6 +186,7 @@ export const evaluateOffers = async (req: AuthRequest, res: Response, next: Next
           district,
           totalQuantity,
           orderAmount,
+          items: offerItems,
         });
         if (resolution.error) return sendError(res, resolution.error, 400);
         coupon = {
@@ -209,7 +234,7 @@ export const placeOrder = async (req: AuthRequest, res: Response, next: NextFunc
     const cart = await Cart.findOne({ userId })
       .populate({
         path: 'items.productId',
-        select: 'name slug images sellingPrice mrp quantity variants gstRate hsnCode isActive',
+        select: 'name slug images sellingPrice mrp quantity variants gstRate hsnCode isActive vendor',
       });
 
     if (!cart || cart.items.length === 0) {
@@ -245,12 +270,20 @@ export const placeOrder = async (req: AuthRequest, res: Response, next: NextFunc
     const totalQuantity = items.reduce((sum: number, item: any) => sum + item.quantity, 0);
     const { cgst, sgst, igst, totalGst } = calculateOrderTax(items, orderData.isIntraState);
     const district = orderData.shippingAddress?.city;
+    // Which store owns each line: a vendor's offer only discounts that vendor's own items.
+    const offerItems: OfferCartItem[] = validItems.map((item: any, index: number) => ({
+      productId: String(item.productId._id),
+      vendor: item.productId.vendor ? String(item.productId.vendor) : null,
+      quantity: items[index].quantity,
+      lineTotal: items[index].lineTotal,
+    }));
 
     const scratchResolution = await resolveAppliedOffer({
       couponId: orderData.scratchCouponId,
       district,
       totalQuantity,
       orderAmount: subtotal,
+      items: offerItems,
     });
     if (scratchResolution.error) {
       return sendError(res, scratchResolution.error, 400);
@@ -261,6 +294,7 @@ export const placeOrder = async (req: AuthRequest, res: Response, next: NextFunc
       district,
       totalQuantity,
       orderAmount: subtotal,
+      items: offerItems,
     });
     if (couponResolution.error) {
       return sendError(res, couponResolution.error, 400);
@@ -415,19 +449,30 @@ export const applyCoupon = async (req: AuthRequest, res: Response, next: NextFun
       }
     }
 
-    if (coupon.minOrderAmount > 0 && orderAmount < coupon.minOrderAmount) {
+    // A vendor's coupon only applies to that vendor's own products in the cart, and is measured on those items only.
+    const offerItems = await buildOfferCartItems(items);
+    const scope = await scopeOfferToCart(coupon, offerItems, { orderAmount, totalQuantity: quantity });
+    if (scope.scoped && scope.eligibleCount === 0) {
+      return sendError(res, VENDOR_OFFER_ONLY_MESSAGE, 400);
+    }
+    if (scope.scoped && coupon.discountType === 'Free Delivery' && !scope.allEligible) {
+      return sendError(res, VENDOR_FREE_DELIVERY_MESSAGE, 400);
+    }
+    const scopedAmount = scope.orderAmount;
+    const scopedQuantity = scope.totalQuantity;
+
+    if (coupon.minOrderAmount > 0 && scopedAmount < coupon.minOrderAmount) {
       return sendError(res, `Minimum order amount of ₹${coupon.minOrderAmount} required`, 400);
     }
 
     if (coupon.minQuantity > 0) {
-      const qty = totalQuantity || items.reduce((sum, item) => sum + item.quantity, 0);
-      if (qty < coupon.minQuantity) {
+      if (scopedQuantity < coupon.minQuantity) {
         return sendError(res, `Minimum ${coupon.minQuantity} items required for this coupon`, 400);
       }
     }
 
     if (coupon.offerType === 'scratch_card') {
-      const reward = resolveScratchReward(coupon, { totalQuantity: quantity, orderAmount });
+      const reward = resolveScratchReward(coupon, { totalQuantity: scopedQuantity, orderAmount: scopedAmount });
       if (!reward) {
         return sendError(res, 'This scratch card offer does not match your cart', 400);
       }
@@ -450,11 +495,11 @@ export const applyCoupon = async (req: AuthRequest, res: Response, next: NextFun
 
     let discountAmount = 0;
     if (coupon.discountType === 'Percentage') {
-      discountAmount = Math.round((orderAmount * coupon.discountValue) / 100);
+      discountAmount = Math.round((scopedAmount * coupon.discountValue) / 100);
       if (coupon.maxDiscountAmount) {
         discountAmount = Math.min(discountAmount, coupon.maxDiscountAmount);
       }
-      discountAmount = Math.min(discountAmount, orderAmount);
+      discountAmount = Math.min(discountAmount, scopedAmount);
     } else if (coupon.discountType === 'Free Delivery') {
       if (!isDistrictEligible(coupon.freeDeliveryDistricts, district)) {
         return sendError(res, buildFreeDeliveryRejectionMessage(coupon, district), 400);

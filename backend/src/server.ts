@@ -83,10 +83,15 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'x-session-id', 'x-guest-id', 'Accept', 'Origin', 'X-Requested-With'],
 }));
 
+// Razorpay signs the EXACT bytes it sends, so the webhook must receive the raw body (not parsed JSON).
+app.use('/api/payments/webhook', express.raw({ type: '*/*', limit: '1mb' }));
 // Auth endpoints only ever receive tiny JSON bodies: reject anything larger before it is parsed.
 app.use(['/api/auth', '/api/admin/auth'], express.json({ limit: '20kb' }));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Only the admin panel and uploads may send large JSON; everything else is capped at 5 MB.
+app.use(['/api/admin', '/api/upload'], express.json({ limit: '50mb' }));
+app.use(['/api/admin', '/api/upload'], express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ limit: '5mb', extended: true }));
 app.use(cookieParser());
 app.use(morgan('dev'));
 
@@ -103,7 +108,7 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
     }
     return sanitized;
   };
-  if (req.body && typeof req.body === 'object') req.body = sanitize(req.body);
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) req.body = sanitize(req.body);
   next();
 });
 
@@ -121,6 +126,7 @@ app.use('/api/admin/businesses', businessRoutes);
 
 // ─── Static Files ─────────────────────────────────────────────────────────────
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/api/email-assets', express.static(path.join(__dirname, '../public/email-assets')));
 
 // ─── API Routes (cart, products, orders, etc.) ───────────────────────────────
 app.use('/api', apiRoutes);

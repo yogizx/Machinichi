@@ -7,104 +7,6 @@ import { Types } from 'mongoose';
 import fs from 'fs';
 import path from 'path';
 
-// Seed data from the reference image
-const SEED_BANNERS = [
-  {
-    imageWebp: "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=1200&q=80",
-    imageFallback: "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=1200&q=80",
-    bigText: "PREMIUM SELECTION of Organic Rice & Grains",
-    smallText: "ETHICALLY SOURCED ANCIENT GRAINS & AROMATIC BASMATI.",
-    buttonText: "EXPLORE GRAINS",
-    buttonURL: "/grains",
-    contentPosition: "Left Side",
-    isActive: true,
-    order: 0,
-    title: "PREMIUM SELECTION of Organic Rice & Grains",
-    subtitle: "ETHICALLY SOURCED ANCIENT GRAINS & AROMATIC BASMATI.",
-    image: "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=1200&q=80",
-    imageUrl: "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=1200&q=80",
-    position: "home"
-  },
-  {
-    imageWebp: "https://images.unsplash.com/photo-1599599810769-bcde5a160d32?auto=format&fit=crop&w=1200&q=80",
-    imageFallback: "https://images.unsplash.com/photo-1599599810769-bcde5a160d32?auto=format&fit=crop&w=1200&q=80",
-    bigText: "PURE. NATURAL. WHOLESOME.",
-    smallText: "GOODNESS OF NATURE IN EVERY GRAIN.",
-    buttonText: "SHOP NOW",
-    buttonURL: "/shop",
-    contentPosition: "Right Side",
-    isActive: true,
-    order: 1,
-    title: "PURE. NATURAL. WHOLESOME.",
-    subtitle: "GOODNESS OF NATURE IN EVERY GRAIN.",
-    image: "https://images.unsplash.com/photo-1599599810769-bcde5a160d32?auto=format&fit=crop&w=1200&q=80",
-    imageUrl: "https://images.unsplash.com/photo-1599599810769-bcde5a160d32?auto=format&fit=crop&w=1200&q=80",
-    position: "home"
-  },
-  {
-    imageWebp: "https://images.unsplash.com/photo-1536304993881-ff6e9eefa2a6?auto=format&fit=crop&w=1200&q=80",
-    imageFallback: "https://images.unsplash.com/photo-1536304993881-ff6e9eefa2a6?auto=format&fit=crop&w=1200&q=80",
-    bigText: "FROM FARM TO YOUR FAMILY",
-    smallText: "100% ORGANIC. 100% TRUSTED.",
-    buttonText: "LEARN MORE",
-    buttonURL: "/about-us",
-    contentPosition: "Left Side",
-    isActive: true,
-    order: 2,
-    title: "FROM FARM TO YOUR FAMILY",
-    subtitle: "100% ORGANIC. 100% TRUSTED.",
-    image: "https://images.unsplash.com/photo-1536304993881-ff6e9eefa2a6?auto=format&fit=crop&w=1200&q=80",
-    imageUrl: "https://images.unsplash.com/photo-1536304993881-ff6e9eefa2a6?auto=format&fit=crop&w=1200&q=80",
-    position: "home"
-  },
-  {
-    imageWebp: "https://images.unsplash.com/photo-1543257580-7269da773bf5?auto=format&fit=crop&w=1200&q=80",
-    imageFallback: "https://images.unsplash.com/photo-1543257580-7269da773bf5?auto=format&fit=crop&w=1200&q=80",
-    bigText: "HEALTHY GRAINS FOR A BETTER YOU",
-    smallText: "NOURISHING YOU NATURALLY.",
-    buttonText: "DISCOVER MORE",
-    buttonURL: "/products",
-    contentPosition: "Right Side",
-    isActive: true,
-    order: 3,
-    title: "HEALTHY GRAINS FOR A BETTER YOU",
-    subtitle: "NOURISHING YOU NATURALLY.",
-    image: "https://images.unsplash.com/photo-1543257580-7269da773bf5?auto=format&fit=crop&w=1200&q=80",
-    imageUrl: "https://images.unsplash.com/photo-1543257580-7269da773bf5?auto=format&fit=crop&w=1200&q=80",
-    position: "home"
-  },
-  {
-    imageWebp: "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=1200&q=80",
-    imageFallback: "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=1200&q=80",
-    bigText: "",
-    smallText: "",
-    buttonText: "",
-    buttonURL: "",
-    contentPosition: "Left Side",
-    isActive: true,
-    order: 4,
-    title: "Banner 5",
-    subtitle: "",
-    image: "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=1200&q=80",
-    imageUrl: "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=1200&q=80",
-    position: "home"
-  }
-];
-
-// Seed default banners helper
-const checkAndSeedBanners = async (userId?: string) => {
-  const count = await Banner.countDocuments();
-  if (count === 0) {
-    console.log('[BANNER CONTROL] Database empty. Seeding 5 initial reference banners.');
-    const creator = userId ? new Types.ObjectId(userId) : undefined;
-    const items = SEED_BANNERS.map(b => ({
-      ...b,
-      createdBy: creator
-    }));
-    await Banner.insertMany(items);
-  }
-};
-
 // Helper to safely delete local uploaded files when replaced or deleted
 const deleteLocalFile = (fileUrl: string) => {
   if (!fileUrl) return;
@@ -124,9 +26,8 @@ const deleteLocalFile = (fileUrl: string) => {
 };
 
 // Fetch only active banners for public homepage (Home.jsx) carousel
-export const getActiveBanners = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const getActiveBanners = async (_req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await checkAndSeedBanners(req.user?.userId);
     const banners = await Banner.find({
       isActive: true,
       $and: [
@@ -160,7 +61,6 @@ export const getAllBanners = async (req: AuthRequest, res: Response, next: NextF
       return sendError(res, 'Admin access required', 403);
     }
 
-    await checkAndSeedBanners(req.user?.userId);
     const banners = await Banner.find().sort({ order: 1, createdAt: -1 });
     sendSuccess(res, { data: banners });
   } catch (error) {

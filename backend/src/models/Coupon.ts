@@ -28,6 +28,9 @@ export interface ICoupon extends mongoose.Document {
   isActive: boolean;
   status: 'active' | 'draft' | 'expired' | 'disabled';
   createdBy: mongoose.Types.ObjectId;
+  // Set when a vendor created the offer: it then applies ONLY to that vendor's own products.
+  // Admin offers have no vendor and apply to the whole cart as before.
+  vendor?: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -60,6 +63,7 @@ const couponSchema = new Schema<ICoupon>({
   isActive: { type: Boolean, default: true },
   status: { type: String, enum: ['active', 'draft', 'expired', 'disabled'], default: 'active' },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  vendor: { type: Schema.Types.ObjectId, ref: 'Business', index: true },
 }, { timestamps: true });
 
 couponSchema.index({ isActive: 1 });

@@ -9,6 +9,37 @@ import { sendSuccess, sendError, sendPaginated } from '../services/apiResponse';
 import { createProductSchema, updateProductSchema, productQuerySchema } from '../validators';
 import { Types } from 'mongoose';
 
+// SECURITY: fields only the shop owner may see (what the products cost, who supplies them, who edited them).
+// They must never be sent to the public storefront - competitors could read your margins and suppliers.
+const INTERNAL_PRODUCT_FIELDS = [
+  'costPrice', 'purchasePrice', 'profitMargin', 'suppliers', 'purchaseHistory', 'approvedBy',
+  'approvalNotes', 'createdBy', 'updatedBy', 'warehouseStock', 'lowStockThreshold', 'reorderLevel',
+];
+const INTERNAL_VARIANT_FIELDS = ['costPrice', 'purchasePrice', 'warehouseStock', 'lowStockThreshold', 'reorderLevel', 'supplierSKU'];
+// Same list as a Mongoose `.select()` exclusion (profitMargin is a virtual, so it is not a selectable field).
+const INTERNAL_PRODUCT_SELECT = INTERNAL_PRODUCT_FIELDS.filter((f) => f !== 'profitMargin').map((f) => `-${f}`).join(' ');
+
+const stripInternalVariantFields = (variants: any[]): any[] =>
+  variants.map((v: any) => {
+    const clean = { ...v };
+    INTERNAL_VARIANT_FIELDS.forEach((f) => delete clean[f]);
+    if (Array.isArray(clean.subVariants)) clean.subVariants = stripInternalVariantFields(clean.subVariants);
+    return clean;
+  });
+
+// Works for plain (lean) objects and for Mongoose documents.
+function stripInternalProductFields(p: any) {
+  if (!p) return p;
+  const obj = typeof p.toJSON === 'function' ? p.toJSON() : { ...p };
+  INTERNAL_PRODUCT_FIELDS.forEach((f) => delete obj[f]);
+  if (Array.isArray(obj.variants)) obj.variants = stripInternalVariantFields(obj.variants);
+  return obj;
+}
+
+// Search text is user input: escape it before it goes into a database regex (otherwise a crafted pattern can
+// make the database spend all its CPU on one request).
+const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 function sanitizeSingleProductDoc(p: any) {
   if (!p) return p;
   // Filter out data URL images (base64) from product images - only keep permanent URLs
@@ -43,12 +74,13 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
     const filter: any = { isDeleted: false, publishStatus: 'published' };
 
     if (search) {
+      const safeSearch = escapeRegex(search.slice(0, 100));
       filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { shortDescription: { $regex: search, $options: 'i' } },
-        { tags: { $regex: search, $options: 'i' } },
-        { brand: { $regex: search, $options: 'i' } },
+        { name: { $regex: safeSearch, $options: 'i' } },
+        { description: { $regex: safeSearch, $options: 'i' } },
+        { shortDescription: { $regex: safeSearch, $options: 'i' } },
+        { tags: { $regex: safeSearch, $options: 'i' } },
+        { brand: { $regex: safeSearch, $options: 'i' } },
       ];
     }
 
@@ -85,7 +117,7 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
       .sort(sortOption)
       .skip(skip)
       .limit(limit)
-      .select('name slug sku barcode brand category subCategory mrpPrice sellingPrice costPrice quantity warehouseStock reservedQuantity publishStatus status isFeatured thumbnail badges weight unitType createdAt updatedAt averageRating reviewCount')
+      .select('name slug sku barcode brand category subCategory mrpPrice sellingPrice quantity reservedQuantity publishStatus status isFeatured isTrending isBestSeller isNewArrival isLimitedOffer isRecommended thumbnail badges weight unitType createdAt updatedAt averageRating reviewCount shortDescription description size measurement.packageWeight productHighlights.quantity')
       .populate('category', 'name slug')
       .lean();
     const total = await Product.countDocuments(filter);
@@ -105,10 +137,9 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
 export const getProductBySlug = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { slug } = req.params;
-    const rawProduct = await Product.findOne({ slug, isDeleted: false })
+    const rawProduct = await Product.findOne({ slug, isDeleted: false, publishStatus: 'published' })
       .populate('category', 'name slug')
       .populate('relatedProductsCategory', 'name slug')
-      .populate('createdBy', 'name')
       .populate('frequentlyBoughtTogether', 'name slug thumbnail sellingPrice mrpPrice averageRating')
       .populate('crossSell', 'name slug thumbnail sellingPrice mrpPrice averageRating')
       .populate('upSell', 'name slug thumbnail sellingPrice mrpPrice averageRating')
@@ -123,7 +154,7 @@ export const getProductBySlug = async (req: AuthRequest, res: Response, next: Ne
       .limit(10)
       .lean();
 
-    const product = sanitizeSingleProductDoc(rawProduct);
+    const product = stripInternalProductFields(sanitizeSingleProductDoc(rawProduct));
     sendSuccess(res, { data: { ...product, reviews } });
   } catch (error) {
     next(error);
@@ -136,7 +167,7 @@ export const getProductById = async (req: AuthRequest, res: Response, next: Next
       .populate('category', 'name slug')
       .populate('relatedProductsCategory', 'name slug');
     if (!product) return sendError(res, 'Product not found', 404);
-    sendSuccess(res, { data: product });
+    sendSuccess(res, { data: stripInternalProductFields(product) });
   } catch (error) {
     next(error);
   }
@@ -145,11 +176,11 @@ export const getProductById = async (req: AuthRequest, res: Response, next: Next
 export const getFeaturedProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const products = await Product.find({ isFeatured: true, isDeleted: false, publishStatus: 'published' })
-      .select('-seo')
+      .select(`-seo ${INTERNAL_PRODUCT_SELECT}`)
       .populate('category', 'name slug')
       .sort({ createdAt: -1 })
       .limit(12);
-    sendSuccess(res, { data: products });
+    sendSuccess(res, { data: products.map(stripInternalProductFields) });
   } catch (error) {
     next(error);
   }
@@ -157,10 +188,11 @@ export const getFeaturedProducts = async (req: AuthRequest, res: Response, next:
 
 export const searchProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { q } = req.query;
-    if (!q || typeof q !== 'string') {
+    const { q: rawQuery } = req.query;
+    if (!rawQuery || typeof rawQuery !== 'string') {
       return sendError(res, 'Search query is required', 400);
     }
+    const q = escapeRegex(rawQuery.slice(0, 100));
 
     const products = await Product.find({
       isDeleted: false,
@@ -178,7 +210,7 @@ export const searchProducts = async (req: AuthRequest, res: Response, next: Next
       .select('name slug images sellingPrice mrpPrice quantity variants')
       .limit(20);
 
-    sendSuccess(res, { data: products });
+    sendSuccess(res, { data: products.map(stripInternalProductFields) });
   } catch (error) {
     next(error);
   }
@@ -243,7 +275,7 @@ export const getRelatedProducts = async (req: AuthRequest, res: Response, next: 
       related = [...related, ...fallback];
     }
 
-    sendSuccess(res, { data: related });
+    sendSuccess(res, { data: related.map(stripInternalProductFields) });
   } catch (error) {
     next(error);
   }
@@ -284,7 +316,7 @@ export const getTrendingProducts = async (req: AuthRequest, res: Response, next:
       trending = [...trending, ...fallback];
     }
 
-    sendSuccess(res, { data: trending });
+    sendSuccess(res, { data: trending.map(stripInternalProductFields) });
   } catch (error) {
     next(error);
   }

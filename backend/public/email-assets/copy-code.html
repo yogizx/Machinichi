@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Copy your code - Machinichi</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px;
+      background: #f6e6d8; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #3d3029; }
+    .card { width: 100%; max-width: 480px; background: #fffaf4; border-radius: 28px; padding: 36px 28px 32px;
+      text-align: center; box-shadow: 0 18px 50px rgba(120, 72, 36, 0.16); }
+    .brand { font-family: Georgia, 'Times New Roman', serif; font-size: 40px; font-weight: 700; line-height: 1; color: #4a1d0a; }
+    .brand span { color: #ea6d17; }
+    .tag { margin-top: 8px; font-size: 11px; letter-spacing: 3px; color: #4a2c1a; }
+    h1 { margin: 26px 0 0; font-family: Georgia, 'Times New Roman', serif; font-size: 28px; color: #4a1d0a; }
+    p { margin: 10px 0 0; font-size: 15px; line-height: 1.55; color: #4a5568; }
+    .panel { margin-top: 22px; background: #fceedf; border-radius: 20px; padding: 22px 12px 24px; }
+    .digits { display: flex; justify-content: center; gap: 8px; }
+    .digit { width: 44px; height: 54px; display: grid; place-items: center; background: #fff; border: 1px solid #f0a266;
+      border-radius: 12px; font-family: Georgia, 'Times New Roman', serif; font-size: 28px; font-weight: 700; color: #3a1a0a; }
+    button { margin-top: 20px; min-width: 200px; padding: 15px 44px; border: 0; border-radius: 30px; cursor: pointer;
+      font: 700 18px 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #fff;
+      background: linear-gradient(90deg, #f57f1f, #e05e0a); box-shadow: 0 8px 18px rgba(234, 109, 23, 0.32);
+      transition: background 0.2s ease, box-shadow 0.2s ease; }
+    button.done { background: #16a34a; box-shadow: 0 8px 18px rgba(22, 163, 74, 0.32); cursor: default; }
+    .hint { font-size: 13px; color: #8a7a70; }
+    .error { color: #b91c1c; font-weight: 600; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand">Machini<span>chi</span></div>
+    <div class="tag">THE MODERN GENERAL STORE</div>
+    <h1>Your Verification Code</h1>
+    <p id="intro">Copy the code, then go back to your vendor application and paste it in.</p>
+    <div class="panel" id="panel">
+      <div class="digits" id="digits"></div>
+      <button type="button" id="copy">Copy Code</button>
+    </div>
+    <p class="hint" id="hint">Please don&rsquo;t share this code with anyone.</p>
+    <p class="error" id="error" hidden>This link does not contain a valid code. Please use the code in your e-mail.</p>
+  </main>
+  <script src="copy-code.js"></script>
+</body>
+</html>

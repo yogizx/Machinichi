@@ -32,7 +32,8 @@ const productImage =
   "https://images.unsplash.com/photo-1602928321679-560bb453f190?auto=format&fit=crop&w=360&q=92";
 
 const parseCurrency = (value) => Number(String(value).replace(/[^\d]/g, "")) || 0;
-const formatCurrency = (value) => `₹${value.toLocaleString("en-IN")}.00`;
+const formatCurrency = (value) =>
+  `₹${Number(value).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const promoOffers = {
   MACH10: {
@@ -336,6 +337,11 @@ function Checkout({ isSignedIn }) {
           orderAmount: subtotal,
           totalQuantity: getTotalItemCount(orderItems),
           district,
+          items: orderItems.filter((item) => item._id).map((item) => ({
+            productId: item._id,
+            quantity: item.quantity || 1,
+            sellingPrice: parseCurrency(item.price) || 0,
+          })),
         });
 
         if (!cancelled && data?.success) {
@@ -569,6 +575,7 @@ function Checkout({ isSignedIn }) {
         shippingCharges: payloadShipping,
         discountAmount,
         scratchCouponId: scratchReward?.couponId || undefined,
+        scratchDefault: scratchReward?.isDefault ? true : undefined,
         scratchDiscountAmount,
         coupon: appliedPromo ? { code: appliedPromo.code, couponId: appliedPromo.couponId, discountAmount: promoDiscountAmount, discountType: appliedPromo.discountType } : undefined,
         promoCode: appliedPromo ? appliedPromo.code : "",

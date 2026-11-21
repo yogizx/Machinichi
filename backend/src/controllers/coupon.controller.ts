@@ -121,6 +121,8 @@ export const createCoupon = async (req: AuthRequest, res: Response, next: NextFu
       isActive: data.isActive,
       status: data.status,
       createdBy: new Types.ObjectId(req.user.userId),
+      // Offers made from the vendor dashboard belong to that store and only apply to its own products.
+      ...((req as any).vendor?.businessId ? { vendor: new Types.ObjectId((req as any).vendor.businessId) } : {}),
     } as any);
 
     sendSuccess(res, { data: coupon }, 201);

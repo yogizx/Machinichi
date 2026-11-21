@@ -137,78 +137,92 @@ const BRAND = {
   tagline: 'The Modern General Store',
   primaryColor: '#ad4d00',
   secondaryColor: '#3a1100',
-  bgLight: '#fbf5ef',
+  bgLight: '#f6efe7',
   bgCard: '#ffffff',
   textDark: '#17120f',
   textMuted: '#6f7b91',
   accent: '#a68135',
 };
 
+// Escapes text that came from a user before it is placed into the HTML of an e-mail.
+const escapeHtml = (value: string): string =>
+  String(value ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string, string>
+  )[c]);
+
+const clientUrl = (): string => process.env.CLIENT_URL || 'http://localhost:5173';
+
 const emailHead = `
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light only">
 <title>${BRAND.name}</title>`;
 
 const emailStyles = `
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: ${BRAND.bgLight}; -webkit-font-smoothing: antialiased; }
-  .wrapper { background-color: ${BRAND.bgLight}; padding: 32px 16px; }
-  .container { max-width: 520px; margin: 0 auto; background-color: ${BRAND.bgCard}; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.06); }
-  .header { padding: 32px 32px 0; text-align: center; }
-  .logo { font-size: 28px; font-weight: 900; letter-spacing: -0.03em; color: ${BRAND.textDark}; }
-  .logo span { color: ${BRAND.primaryColor}; }
-  .tagline { font-size: 13px; color: ${BRAND.textMuted}; margin-top: 4px; }
-  .divider { height: 1px; background: linear-gradient(to right, transparent, #e8ddd0, transparent); margin: 20px 32px; }
-  .body-content { padding: 0 32px 24px; }
-  .greeting { font-size: 16px; font-weight: 700; color: ${BRAND.textDark}; margin-bottom: 12px; }
-  .text { font-size: 15px; line-height: 1.6; color: #3d3834; margin-bottom: 16px; }
-  .text-muted { font-size: 14px; line-height: 1.5; color: ${BRAND.textMuted}; margin-bottom: 16px; }
-  .cta-wrapper { text-align: center; margin: 24px 0; }
-  .cta { display: inline-block; padding: 14px 36px; background-color: ${BRAND.primaryColor}; color: #ffffff !important; text-decoration: none; border-radius: 40px; font-size: 16px; font-weight: 800; letter-spacing: 0.02em; box-shadow: 0 8px 20px rgba(173,77,0,0.25); transition: all 0.2s; }
-  .cta:hover { background-color: #9d4500; transform: translateY(-1px); }
-  .otp-box { text-align: center; padding: 20px; background: #f8f2ec; border-radius: 12px; letter-spacing: 12px; font-size: 36px; font-weight: 900; color: ${BRAND.primaryColor}; margin: 20px 0; }
-  .security-badge { display: flex; align-items: center; gap: 8px; background: #fff8f0; border: 1px solid #f0e4d6; border-radius: 8px; padding: 12px 16px; margin: 20px 0; font-size: 13px; color: ${BRAND.textMuted}; }
+  body, table, td, p, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  body { margin: 0; padding: 0; width: 100% !important; background-color: ${BRAND.bgLight}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+  table { border-collapse: collapse; }
+  .greeting { margin: 0 0 10px; font-size: 24px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.25; color: ${BRAND.textDark}; }
+  .text { margin: 0 0 16px; font-size: 15px; line-height: 1.7; color: #3d3834; }
+  .text-muted { margin: 0 0 16px; font-size: 13px; line-height: 1.6; color: ${BRAND.textMuted}; }
+  .cta-wrapper { text-align: center; margin: 28px 0; }
+  .cta { display: inline-block; padding: 15px 42px; background-color: ${BRAND.primaryColor}; color: #ffffff !important; text-decoration: none; border-radius: 999px; font-size: 16px; font-weight: 800; letter-spacing: 0.02em; }
+  .pill { display: inline-block; padding: 8px 16px; background-color: #fff3e6; border: 1px solid #f3dcc4; border-radius: 999px; font-size: 13px; font-weight: 700; color: #8a3b00; }
+  .security-badge { background-color: #fff8f0; border: 1px solid #f0e4d6; border-left: 4px solid ${BRAND.primaryColor}; border-radius: 10px; padding: 14px 16px; margin: 24px 0; font-size: 13px; line-height: 1.6; color: ${BRAND.textMuted}; }
   .security-badge strong { color: ${BRAND.secondaryColor}; }
-  .footer { background: #f8f2ec; padding: 24px 32px; text-align: center; }
-  .footer-text { font-size: 12px; color: #a79d96; line-height: 1.6; }
-  .footer-text a { color: ${BRAND.primaryColor}; text-decoration: none; }
-  .support-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e8ddd0; }
-  .support-text { font-size: 13px; color: ${BRAND.textMuted}; line-height: 1.5; }
+  .support-section { margin-top: 24px; padding-top: 18px; border-top: 1px solid #efe5da; }
+  .support-text { margin: 0; font-size: 13px; line-height: 1.6; color: ${BRAND.textMuted}; }
+  a { color: ${BRAND.primaryColor}; }
   @media only screen and (max-width: 480px) {
-    .wrapper { padding: 16px 8px; }
-    .container { border-radius: 12px; }
-    .header { padding: 24px 20px 0; }
-    .body-content { padding: 0 20px 20px; }
-    .divider { margin: 16px 20px; }
-    .footer { padding: 20px; }
-    .otp-box { font-size: 28px; letter-spacing: 8px; }
+    .px { padding-left: 20px !important; padding-right: 20px !important; }
+    .otp-cell { width: 40px !important; height: 52px !important; font-size: 26px !important; }
+    .greeting { font-size: 21px !important; }
   }
 </style>`;
 
-const buildHtml = (content: string) => `
+// The one-time code, one digit per box (inline styles: e-mail clients ignore most CSS).
+const otpDigitsHtml = (otp: string): string => {
+  const digits = String(otp).split('');
+  const cells = digits.map((d, i) => `
+      <td class="otp-cell" align="center" width="48" height="60" bgcolor="#fbf5ef" style="width:48px;height:60px;background-color:#fbf5ef;border:2px solid #ecd9c6;border-radius:12px;font-family:'SFMono-Regular',Consolas,'Courier New',monospace;font-size:30px;font-weight:900;color:${BRAND.primaryColor};">${escapeHtml(d)}</td>${i < digits.length - 1 ? '<td width="8" style="width:8px;font-size:0;line-height:0;">&nbsp;</td>' : ''}`).join('');
+  return `<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:28px auto;"><tr>${cells}</tr></table>`;
+};
+
+const buildHtml = (content: string, preheader = '') => `
 <!DOCTYPE html>
 <html lang="en">
 <head>${emailHead}${emailStyles}</head>
-<body>
-  <div class="wrapper">
-    <div class="container">
-      <div class="header">
-        <div class="logo">${BRAND.name}<span>.</span></div>
-        <p class="tagline">${BRAND.tagline}</p>
-      </div>
-      <div class="divider"></div>
-      <div class="body-content">
-        ${content}
-      </div>
-      <div class="footer">
-        <p class="footer-text">
-          ${BRAND.name} &mdash; The Modern General Store<br>
-          If you did not request this email, please ignore it or <a href="mailto:support@machinichi.com">contact support</a>.
-        </p>
-      </div>
-    </div>
-  </div>
+<body style="margin:0;padding:0;background-color:${BRAND.bgLight};">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${escapeHtml(preheader)}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.bgLight}" style="background-color:${BRAND.bgLight};">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:560px;">
+          <tr>
+            <td align="center" bgcolor="${BRAND.secondaryColor}" style="background-color:${BRAND.secondaryColor};border-radius:20px 20px 0 0;padding:32px 24px 28px;">
+              <div style="font-size:32px;font-weight:900;letter-spacing:-0.03em;line-height:1;color:#ffffff;">${BRAND.name}<span style="color:#ff9b45;">.</span></div>
+              <div style="margin-top:10px;font-size:11px;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#d9c3ad;">${BRAND.tagline}</div>
+            </td>
+          </tr>
+          <tr><td height="4" bgcolor="${BRAND.primaryColor}" style="height:4px;line-height:4px;font-size:0;background-color:${BRAND.primaryColor};">&nbsp;</td></tr>
+          <tr>
+            <td class="px" bgcolor="#ffffff" style="background-color:#ffffff;padding:38px 44px 14px;">
+              ${content}
+            </td>
+          </tr>
+          <tr>
+            <td align="center" bgcolor="#faf5ef" style="background-color:#faf5ef;border-top:1px solid #efe5da;border-radius:0 0 20px 20px;padding:26px 32px;">
+              <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:${BRAND.secondaryColor};">${BRAND.name} &mdash; ${BRAND.tagline}</p>
+              <p style="margin:0;font-size:12px;line-height:1.7;color:#8d837b;">If you didn&rsquo;t request this email, you can safely ignore it or <a href="mailto:support@machinichi.com" style="color:${BRAND.primaryColor};text-decoration:underline;">contact support</a>.</p>
+              <p style="margin:14px 0 0;font-size:11px;color:#b3a9a1;">&copy; ${new Date().getFullYear()} ${BRAND.name}. All rights reserved.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>`;
 
@@ -234,11 +248,14 @@ export const sendWelcomeEmail = async (to: string, userName: string) => {
   }
 
   const content = `
-    <p class="greeting">Hello ${userName},</p>
+    <p class="greeting">Hello ${escapeHtml(userName)},</p>
     <p class="text">Welcome to our Machinichi Shop!</p>
     <p class="text">Your account has been created successfully.</p>
     <p class="text">You can now sign in to your Machinichi account using your registered email address and password.</p>
     <p class="text">Thank you for joining Machinichi.</p>
+    <div class="cta-wrapper">
+      <a href="${clientUrl()}/signin" class="cta">Sign In to Your Account</a>
+    </div>
     <p class="text" style="margin-top: 24px;">Regards,<br><strong>Machinichi Team</strong></p>
   `;
 
@@ -260,7 +277,7 @@ export const sendWelcomeEmail = async (to: string, userName: string) => {
     from: `"${BRAND.name}" <${process.env.EMAIL_FROM}>`,
     to,
     subject: `Welcome to Machinichi – Your Account Has Been Created Successfully`,
-    html: buildHtml(content),
+    html: buildHtml(content, 'Your Machinichi account is ready. Sign in and start shopping.'),
   });
 
   const accepted = !!(info.accepted && info.accepted.includes(to));
@@ -277,7 +294,7 @@ export const sendWelcomeEmail = async (to: string, userName: string) => {
 };
 
 export const sendPasswordResetEmail = async (to: string, resetLink: string, userName?: string) => {
-  const greeting = userName ? `Hello ${userName},` : 'Hello,';
+  const greeting = userName ? `Hello ${escapeHtml(userName)},` : 'Hello,';
   const content = `
     <p class="greeting">${greeting}</p>
     <p class="text">We received a request to reset the password for your ${BRAND.name} account. Click the button below to create a new password.</p>
@@ -298,18 +315,18 @@ export const sendPasswordResetEmail = async (to: string, resetLink: string, user
     from: `"${BRAND.name}" <${process.env.EMAIL_FROM}>`,
     to,
     subject: `Reset Your ${BRAND.name} Password`,
-    html: buildHtml(content),
+    html: buildHtml(content, 'Use the button inside to choose a new password. The link expires in 30 minutes.'),
   });
 };
 
 export const sendResetSuccessEmail = async (to: string, userName?: string) => {
-  const greeting = userName ? `Hello ${userName},` : 'Hello,';
+  const greeting = userName ? `Hello ${escapeHtml(userName)},` : 'Hello,';
   const content = `
     <p class="greeting">${greeting}</p>
     <p class="text">Your ${BRAND.name} password has been changed successfully.</p>
     <p class="text">If you made this change, no further action is needed. If you did <strong>not</strong> change your password, please secure your account immediately.</p>
     <div class="cta-wrapper">
-      <a href="${process.env.CLIENT_URL}/signin" class="cta">Sign In</a>
+      <a href="${clientUrl()}/signin" class="cta">Sign In</a>
     </div>
     <div class="security-badge">
       <span style="font-size:18px;">✅</span>
@@ -324,16 +341,16 @@ export const sendResetSuccessEmail = async (to: string, userName?: string) => {
     from: `"${BRAND.name}" <${process.env.EMAIL_FROM}>`,
     to,
     subject: `Password Changed Successfully — ${BRAND.name}`,
-    html: buildHtml(content),
+    html: buildHtml(content, 'Your password was changed. If this was not you, secure your account now.'),
   });
 };
 
 export const sendEmailVerificationEmail = async (to: string, otp: string, userName?: string) => {
-  const greeting = userName ? `Hello ${userName},` : 'Hello,';
+  const greeting = userName ? `Hello ${escapeHtml(userName)},` : 'Hello,';
   const content = `
     <p class="greeting">${greeting}</p>
     <p class="text">Thank you for joining ${BRAND.name}! Please verify your email address using the code below.</p>
-    <div class="otp-box">${otp}</div>
+    ${otpDigitsHtml(otp)}
     <p class="text-muted">This code expires in <strong>10 minutes</strong>. Do not share this code with anyone.</p>
     <div class="security-badge">
       <span style="font-size:18px;">🛡️</span>
@@ -345,7 +362,7 @@ export const sendEmailVerificationEmail = async (to: string, otp: string, userNa
     from: `"${BRAND.name}" <${process.env.EMAIL_FROM}>`,
     to,
     subject: `Verify Your Email — ${BRAND.name}`,
-    html: buildHtml(content),
+    html: buildHtml(content, 'Your Machinichi email verification code. It expires in 10 minutes.'),
   });
 };
 
@@ -357,13 +374,15 @@ export const sendSignupOtpEmail = async (to: string, otp: string) => {
 
   const content = `
     <p class="greeting">Verify your email address</p>
-    <p class="text">Use the code below to verify your email and finish creating your ${BRAND.name} account.</p>
-    <div class="otp-box">${otp}</div>
-    <p class="text-muted">This code is valid for <strong>5 minutes</strong>. Do not share it with anyone.</p>
-    <div class="security-badge">
-      <span style="font-size:18px;">🛡️</span>
-      <span>We will never ask for your password or OTP via email or phone.</span>
+    <p class="text">Enter the code below on the ${BRAND.name} sign-up page to confirm your email and finish creating your account.</p>
+    ${otpDigitsHtml(otp)}
+    <div style="text-align:center;margin:0 0 6px;">
+      <span class="pill">&#9201;&nbsp; Valid for 5 minutes</span>
     </div>
+    <div class="security-badge">
+      <strong>Never share this code.</strong> ${BRAND.name} will never ask for your OTP or password by email, phone or chat.
+    </div>
+    <p class="text-muted">Didn&rsquo;t try to create an account? You can safely ignore this email &mdash; no account will be created without this code.</p>
   `;
 
   const info = await getTransporter().sendMail({
@@ -371,7 +390,7 @@ export const sendSignupOtpEmail = async (to: string, otp: string) => {
     to,
     subject: `Your ${BRAND.name} verification code`,
     text: `Your ${BRAND.name} verification code is ${otp}. It is valid for 5 minutes. Do not share it with anyone.`,
-    html: buildHtml(content),
+    html: buildHtml(content, `Your ${BRAND.name} verification code - valid for 5 minutes.`),
   });
 
   if (!(info.accepted && info.accepted.includes(to))) {
@@ -381,11 +400,11 @@ export const sendSignupOtpEmail = async (to: string, otp: string) => {
 
 export const sendGoogleWelcomeEmail = async (to: string, userName: string) => {
   const content = `
-    <p class="greeting">Welcome to ${BRAND.name}, ${userName}!</p>
+    <p class="greeting">Welcome to ${BRAND.name}, ${escapeHtml(userName)}!</p>
     <p class="text">You've successfully signed in with Google. Your account is now linked and ready to use.</p>
     <p class="text">Explore our premium collection of dry fruits, traditional snacks, and everyday essentials curated just for you.</p>
     <div class="cta-wrapper">
-      <a href="${process.env.CLIENT_URL}" class="cta">Explore Store</a>
+      <a href="${clientUrl()}" class="cta">Explore Store</a>
     </div>
     <div class="security-badge">
       <span style="font-size:18px;">🛡️</span>
@@ -408,7 +427,7 @@ export const sendOTPEmail = async (to: string, otp: string, purpose: string) => 
 
   const content = `
     <p class="text">${purpose === 'password_reset' ? 'Use the code below to reset your password.' : 'Use the code below to verify your account.'}</p>
-    <div class="otp-box">${otp}</div>
+    ${otpDigitsHtml(otp)}
     <p class="text-muted">This code expires in <strong>10 minutes</strong>. Do not share this code with anyone.</p>
     <div class="security-badge">
       <span style="font-size:18px;">🛡️</span>
@@ -480,6 +499,43 @@ Machinichi Team`;
   }
 
   console.log(`[EMAIL] ANALYTICS REPORT EMAIL SENT SUCCESSFULLY to ${to}`);
+};
+
+export interface StaffInvitationEmail {
+  fullName: string;
+  roleName: string;
+  inviteUrl: string;
+  invitedByName?: string;
+  expiresAt: Date;
+}
+
+// Staff invitation. The link carries a single-use token in the URL fragment (never sent to servers or logs).
+// No password is ever e-mailed: the invitee chooses one and enrols an authenticator app on the activation page.
+export const sendStaffInvitationEmail = async (to: string, data: StaffInvitationEmail) => {
+  if (!hasSmtpConfig() && process.env.NODE_ENV === 'production') {
+    // Never fall back to the console transport in production: it would print the invitation link into the logs.
+    throw new Error('SMTP configuration missing in environment variables');
+  }
+
+  const hours = Math.max(1, Math.round((data.expiresAt.getTime() - Date.now()) / 3600000));
+  const content = `
+    <h1 class="greeting">You&rsquo;ve been invited to the ${BRAND.name} admin team</h1>
+    <p class="text">Hello ${escapeHtml(data.fullName)},</p>
+    <p class="text">${data.invitedByName ? `<strong>${escapeHtml(data.invitedByName)}</strong> has` : 'An administrator has'} invited you to join the ${BRAND.name} admin panel as <span class="pill">${escapeHtml(data.roleName)}</span>.</p>
+    <p class="text">To activate your account you will choose a password and set up an authenticator app (two-step verification is required for all staff).</p>
+    <div class="cta-wrapper"><a class="cta" href="${escapeHtml(data.inviteUrl)}">Activate my account</a></div>
+    <p class="text-muted">This link can be used <strong>once</strong> and expires in about <strong>${hours} hours</strong>.</p>
+    <div class="security-badge">
+      <span><strong>Security notice:</strong> we will never send your password by email. If you were not expecting this invitation, ignore this message &mdash; the account stays inactive.</span>
+    </div>
+  `;
+
+  await getTransporter().sendMail({
+    from: `"${BRAND.name}" <${process.env.EMAIL_FROM}>`,
+    to,
+    subject: `You're invited to the ${BRAND.name} admin team`,
+    html: buildHtml(content, `Activate your ${BRAND.name} admin account`),
+  });
 };
 
 export const testTransporter = async () => {

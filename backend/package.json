@@ -9,7 +9,10 @@
     "start": "node dist/server.js",
     "seed": "ts-node src/seeds/seed.ts",
     "migrate:cloudinary": "ts-node src/scripts/migrate-images-to-cloudinary.ts",
-    "sync:ratings": "ts-node src/scripts/sync-product-ratings.ts"
+    "sync:ratings": "ts-node src/scripts/sync-product-ratings.ts",
+    "rbac:setup": "ts-node src/scripts/seedRBAC.ts",
+    "test": "vitest run",
+    "test:security": "vitest run tests"
   },
   "keywords": [],
   "author": "",
@@ -52,8 +55,12 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/supertest": "^6.0.3",
+    "mongodb-memory-server": "^10.1.4",
     "nodemon": "^3.1.14",
+    "supertest": "^7.1.4",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.4"
   }
 }

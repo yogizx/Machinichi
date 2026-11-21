@@ -20,11 +20,22 @@ import {
 } from '../services/razorpay.service';
 import { generateOrderId, generateInvoiceNumber } from '../services/orderId.service';
 import { reserveStock } from '../services/inventory.service';
-import { resolveAppliedOffer } from '../services/offer.service';
+import {
+  buildDefaultScratchReward,
+  filterOffersForCart,
+  getActiveOfferCoupons,
+  hasLiveAdminScratchOffer,
+  OfferCartItem,
+  resolveAppliedOffer,
+  resolveFreeDeliveryOffer,
+} from '../services/offer.service';
 import { Types } from 'mongoose';
 
 import { mapAddressForDb } from './checkout.controller';
 import { APPROVED_ORDER_STATUSES, logAnalyticsEvent } from '../services/regionalAnalytics.service';
+
+// Delivery prices the checkout page offers (standard / express). Anything else sent by a browser is ignored.
+const ALLOWED_SHIPPING_CHARGES = [50, 120] as const;
 
 export const createPaymentOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -37,12 +48,21 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response, next: 
       return sendError(res, 'Validation failed', 400, validation.error.issues);
     }
 
-    const { orderId, amount, currency } = validation.data;
+    // SECURITY: the amount sent by the browser is deliberately ignored - what is charged is the order's own total.
+    const { orderId, currency } = validation.data;
 
     const order = await Order.findById(orderId);
     if (!order) return sendError(res, 'Order not found', 404);
     if (order.userId.toString() !== req.user.userId) {
       return sendError(res, 'Not authorized', 403);
+    }
+    if (order.paymentStatus === 'Paid') {
+      return sendError(res, 'This order has already been paid', 400);
+    }
+
+    const amount = Math.round(Number(order.totalAmount ?? order.orderTotal ?? 0));
+    if (!Number.isFinite(amount) || amount < 1) {
+      return sendError(res, 'Order total is invalid', 400);
     }
 
     const razorpayOrder = await createRazorpayOrder(amount, currency, `ord_${orderId}`);
@@ -84,7 +104,7 @@ export const createDirectPaymentOrder = async (req: AuthRequest, res: Response, 
       return sendError(res, 'Validation failed', 400, validation.error.issues);
     }
 
-    const { amount, currency, items, shippingAddress, subtotal, shippingCharges, discountAmount, promoCode, promoDiscount, coupon, scratchCouponId } = validation.data;
+    const { amount, currency, items, shippingAddress, subtotal, shippingCharges, discountAmount, promoCode, promoDiscount, coupon, scratchCouponId, scratchDefault } = validation.data;
 
     const userId = new Types.ObjectId(req.user.userId);
 
@@ -105,6 +125,27 @@ export const createDirectPaymentOrder = async (req: AuthRequest, res: Response, 
     const missing = productIds.filter(id => !productMap.has(id));
     if (missing.length > 0) {
       return sendError(res, 'One or more items in your order are no longer available. Please refresh your cart and try again.', 400);
+    }
+
+    // SECURITY: the unit price sent by the browser must be a price this product really has: its base price or
+    // the price of one of its variants. Any other value is a tampered price and the order is refused.
+    const validUnitPrices = (product: any): number[] => {
+      const prices: number[] = [Number(product.sellingPrice)];
+      const walk = (variants: any[] | undefined) => {
+        for (const variant of variants || []) {
+          prices.push(Number(variant.sellingPrice));
+          walk(variant.subVariants);
+        }
+      };
+      walk(product.variants);
+      return prices.filter((price) => Number.isFinite(price) && price > 0);
+    };
+    const tamperedItem = (items || []).find((item) => {
+      const product = productMap.get(item.productId)!;
+      return !validUnitPrices(product).some((price) => Math.abs(price - item.sellingPrice) < 0.01);
+    });
+    if (tamperedItem) {
+      return sendError(res, 'The price of an item in your cart has changed. Please refresh your cart and try again.', 400);
     }
 
     const orderItems = (items || []).map(item => {
@@ -128,12 +169,23 @@ export const createDirectPaymentOrder = async (req: AuthRequest, res: Response, 
     const cartSubtotal = orderItems.reduce((s, i: any) => s + i.lineTotal, 0);
     const cartQuantity = orderItems.reduce((s, i: any) => s + i.quantity, 0);
     const deliveryDistrict = shippingAddress?.city;
+    // Which store owns each line (read from the product itself): a vendor's offer only discounts that vendor's own items.
+    const offerItems: OfferCartItem[] = orderItems.map((item: any) => {
+      const product: any = productMap.get(String(item.productId));
+      return {
+        productId: String(item.productId),
+        vendor: product?.vendor ? String(product.vendor) : null,
+        quantity: item.quantity,
+        lineTotal: item.lineTotal,
+      };
+    });
 
     const scratchResolution = await resolveAppliedOffer({
       couponId: scratchCouponId,
       district: deliveryDistrict,
       totalQuantity: cartQuantity,
       orderAmount: cartSubtotal,
+      items: offerItems,
     });
     if (scratchCouponId && scratchResolution.error) {
       return sendError(res, scratchResolution.error, 400);
@@ -145,21 +197,51 @@ export const createDirectPaymentOrder = async (req: AuthRequest, res: Response, 
         district: deliveryDistrict,
         totalQuantity: cartQuantity,
         orderAmount: cartSubtotal,
+        items: offerItems,
       })
       : { coupon: null as any, scratchReward: null, freeDelivery: false, discountAmount: 0, error: null as string | null };
     if (promoResolution.error) {
       return sendError(res, promoResolution.error, 400);
     }
 
-    const scratchReward = scratchResolution.scratchReward;
+    let scratchReward = scratchResolution.scratchReward;
+
+    // Default 3% scratch card: only valid while the admin has no live scratch card offer (a vendor's own scratch card doesn't switch it off).
+    if (!scratchReward && scratchDefault && !scratchCouponId) {
+      const liveOffers = await getActiveOfferCoupons();
+      if (await hasLiveAdminScratchOffer(liveOffers)) {
+        return sendError(res, 'The scratch card offer has changed. Please refresh checkout and try again.', 400);
+      }
+      scratchReward = buildDefaultScratchReward(cartSubtotal);
+    }
     const resolvedScratchDiscount = scratchReward?.discountAmount ?? 0;
-    const resolvedPromoDiscount = promoResolution.coupon
-      ? promoResolution.discountAmount
-      : Math.min(Math.max(promoDiscount || 0, 0), cartSubtotal);
-    const resolvedShipping = promoResolution.freeDelivery ? 0 : Math.max(shippingCharges || 0, 0);
+    // SECURITY: a discount only exists when the SERVER resolved a real offer for it. A free-text `promoDiscount`
+    // sent by the browser is ignored.
+    const resolvedPromoDiscount = promoResolution.coupon ? promoResolution.discountAmount : 0;
+
+    // Delivery is free only when the server itself finds a live free-delivery offer (coupon or district offer);
+    // otherwise it must be one of the delivery options the checkout page really offers.
+    const freeDeliveryOffer = resolveFreeDeliveryOffer(
+      await filterOffersForCart(await getActiveOfferCoupons(), offerItems),
+      deliveryDistrict,
+    );
+    const isFreeDelivery = promoResolution.freeDelivery || !!freeDeliveryOffer?.districtMatched;
+    const requestedShipping = Math.max(Number(shippingCharges) || 0, 0);
+    const resolvedShipping = isFreeDelivery
+      ? 0
+      : (ALLOWED_SHIPPING_CHARGES as readonly number[]).includes(requestedShipping)
+        ? requestedShipping
+        : ALLOWED_SHIPPING_CHARGES[0];
+
     const serverDiscount = resolvedScratchDiscount + resolvedPromoDiscount;
-    const computedPayable = Math.max(cartSubtotal + resolvedShipping + totalGst - serverDiscount, 0);
-    const payableAmount = Math.min(computedPayable, Math.round(amount));
+    // Same total the checkout page shows and has always charged: items + delivery - discounts (GST is recorded
+    // on the order but, as before, not added on top).
+    const payableAmount = Math.round(Math.max(cartSubtotal + resolvedShipping - serverDiscount, 0));
+
+    // The total the customer saw must match the server's own total, otherwise the cart or offer is stale or was tampered with.
+    if (Math.abs(Math.round(amount) - payableAmount) > 2) {
+      return sendError(res, 'The order total has changed. Please refresh the page and try again.', 400);
+    }
 
     if (payableAmount < 1) {
       return sendError(res, 'The applied offer covers the entire order amount. Please remove the offer to continue.', 400);
@@ -203,7 +285,7 @@ export const createDirectPaymentOrder = async (req: AuthRequest, res: Response, 
       totalAmount: payableAmount,
       couponCode: promoResolution.coupon?.code,
       couponId: promoResolution.coupon?._id,
-      scratchCouponId: scratchReward?.couponId,
+      scratchCouponId: scratchReward?.couponId || undefined,
       paymentStatus: 'Pending',
       paymentMethod: 'razorpay',
       orderStatus: 'Pending Approval',
@@ -258,6 +340,10 @@ export const createDirectPaymentOrder = async (req: AuthRequest, res: Response, 
 
 export const verifyPayment = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    if (!req.user?.userId) {
+      return sendError(res, 'Authentication required', 401);
+    }
+
     const validation = verifyPaymentSchema.safeParse(req.body);
     if (!validation.success) {
       return sendError(res, 'Validation failed', 400, validation.error.issues);
@@ -265,19 +351,49 @@ export const verifyPayment = async (req: AuthRequest, res: Response, next: NextF
 
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderId } = validation.data;
 
-    const isValid = verifyPaymentSignature(razorpay_order_id, razorpay_payment_id, razorpay_signature);
-    if (!isValid) {
-      await Payment.findOneAndUpdate(
-        { razorpayOrderId: razorpay_order_id },
-        { status: 'failed', failureReason: 'Signature verification failed' }
-      );
-
-      await Order.findByIdAndUpdate(orderId, { orderStatus: 'Cancelled', status: 'cancelled', paymentStatus: 'Failed' });
+    // SECURITY: the payment being verified must belong to THIS user AND to THIS order. Without this, a valid
+    // signature for a cheap payment could be replayed against any other order id to mark that order as paid.
+    const existing = await Payment.findOne({ razorpayOrderId: razorpay_order_id });
+    if (
+      !existing ||
+      existing.userId.toString() !== req.user.userId ||
+      existing.orderId.toString() !== String(orderId)
+    ) {
       return sendError(res, 'Payment verification failed', 400);
     }
 
+    const isValid = verifyPaymentSignature(razorpay_order_id, razorpay_payment_id, razorpay_signature);
+    if (!isValid) {
+      // A bad signature can only fail the owner's own, still-unpaid payment and order.
+      if (existing.status !== 'captured') {
+        await Payment.updateOne({ _id: existing._id }, { status: 'failed', failureReason: 'Signature verification failed' });
+        await Order.updateOne(
+          { _id: orderId, userId: existing.userId, paymentStatus: { $ne: 'Paid' } },
+          { orderStatus: 'Cancelled', status: 'cancelled', paymentStatus: 'Failed' }
+        );
+      }
+      return sendError(res, 'Payment verification failed', 400);
+    }
+
+    // Replay protection: a payment that is already captured is never processed (or stock-reserved) twice.
+    if (existing.status === 'captured') {
+      return sendSuccess(res, { data: existing, message: 'Payment already verified' });
+    }
+
+    // The amount that was really paid must cover this order's total.
+    const orderToPay = await Order.findById(orderId);
+    if (!orderToPay || orderToPay.userId.toString() !== req.user.userId) {
+      return sendError(res, 'Order not found', 404);
+    }
+    const orderTotalToPay = Math.round(Number(orderToPay.totalAmount ?? orderToPay.orderTotal ?? 0));
+    if (Math.round(existing.amount) < orderTotalToPay) {
+      console.error(`[VERIFY PAYMENT] Amount mismatch for order ${orderId}: paid ${existing.amount}, order total ${orderTotalToPay}`);
+      return sendError(res, 'The amount paid does not match the order total. Please contact support.', 400);
+    }
+
+    // Claim the payment atomically, so two simultaneous requests cannot both process it.
     const payment = await Payment.findOneAndUpdate(
-      { razorpayOrderId: razorpay_order_id },
+      { _id: existing._id, status: { $in: ['created', 'attempted', 'failed'] } },
       {
         status: 'captured',
         razorpayPaymentId: razorpay_payment_id,
@@ -286,6 +402,9 @@ export const verifyPayment = async (req: AuthRequest, res: Response, next: NextF
       },
       { new: true }
     );
+    if (!payment) {
+      return sendSuccess(res, { data: existing, message: 'Payment already verified' });
+    }
 
     const order = await Order.findByIdAndUpdate(orderId, {
       paymentStatus: 'Paid',
@@ -414,13 +533,28 @@ export const handleWebhook = async (req: AuthRequest, res: Response, next: NextF
     const signature = req.headers['x-razorpay-signature'] as string;
     const secret = process.env.RAZORPAY_WEBHOOK_SECRET || '';
 
-    const isValid = verifyWebhookSignature(JSON.stringify(req.body), signature, secret);
-    if (!isValid) {
+    // Fail closed: without a configured secret nobody can prove that a request really came from Razorpay.
+    if (!secret) {
+      console.error('[WEBHOOK] RAZORPAY_WEBHOOK_SECRET is not set - rejecting the webhook');
+      return res.status(503).json({ success: false, message: 'Webhook is not configured' });
+    }
+
+    // The signature covers the exact bytes Razorpay sent, so it is checked against the RAW body
+    // (server.ts mounts express.raw() for this route), never against re-serialised JSON.
+    const rawBody: Buffer | undefined = Buffer.isBuffer(req.body) ? req.body : undefined;
+    if (!rawBody || !verifyWebhookSignature(rawBody, signature, secret)) {
       return res.status(400).json({ success: false, message: 'Invalid webhook signature' });
     }
 
-    const event = req.body.event;
-    const payload = req.body.payload;
+    let body: any;
+    try {
+      body = JSON.parse(rawBody.toString('utf8'));
+    } catch {
+      return res.status(400).json({ success: false, message: 'Invalid webhook payload' });
+    }
+
+    const event = body.event;
+    const payload = body.payload;
 
     switch (event) {
       case 'payment.captured': {
@@ -454,10 +588,14 @@ export const handleWebhook = async (req: AuthRequest, res: Response, next: NextF
 
       case 'refund.created': {
         const refundData = payload.refund.entity;
-        await Payment.findOneAndUpdate(
-          { razorpayPaymentId: refundData.payment_id },
-          { status: 'refunded', refundId: refundData.id }
-        );
+        const refundedPayment = await Payment.findOne({ razorpayPaymentId: refundData.payment_id });
+        if (refundedPayment) {
+          // Only a refund of the WHOLE payment closes it. A partial refund (e.g. one returned item) must leave
+          // it 'captured' so the remaining amount can still be refunded later.
+          refundedPayment.refundId = refundData.id;
+          if (refundData.amount / 100 >= refundedPayment.amount - 0.5) refundedPayment.status = 'refunded';
+          await refundedPayment.save();
+        }
         break;
       }
     }

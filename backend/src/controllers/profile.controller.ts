@@ -48,6 +48,25 @@ export const getProfile = async (req: AuthRequest, res: Response): Promise<any> 
   }
 };
 
+// Public: store brand name that the admin saved under Profile -> Store Information.
+// Falls back to "Machinichi" when no brand name has been entered.
+export const getPublicStoreInfo = async (_req: Request, res: Response): Promise<any> => {
+  try {
+    const admin = await User.findOne({
+      role: { $in: ['admin', 'super_admin'] },
+      isDeleted: { $ne: true },
+      'storeInfo.brandName': { $exists: true, $ne: '' },
+    })
+      .sort({ updatedAt: -1 })
+      .select('storeInfo.brandName');
+
+    const brandName = admin?.storeInfo?.brandName?.trim() || 'Machinichi';
+    return res.status(200).json({ success: true, brandName });
+  } catch {
+    return res.status(200).json({ success: true, brandName: 'Machinichi' });
+  }
+};
+
 export const updateProfile = async (req: AuthRequest, res: Response): Promise<any> => {
   try {
     const { fullName, phone, gstCertificate, fssaiCertificate, twoStep, storeInfo, compliance } = req.body;

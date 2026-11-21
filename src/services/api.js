@@ -1,4 +1,6 @@
 import axios from "axios";
+// Re-targets admin-page API calls to the vendor endpoints while on /vendor/* pages (no effect elsewhere).
+import "./vendorApiRouting";
 
 function normalizeBaseUrl(url) {
   if (!url) return url;
@@ -43,8 +45,10 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !error.config._retry) {
       error.config._retry = true;
       try {
-        const isAdmin = typeof window !== "undefined" && window.location.pathname.startsWith("/admin");
-        const refreshPath = isAdmin ? "/admin/auth/refresh" : "/auth/refresh";
+        const path = typeof window !== "undefined" ? window.location.pathname : "";
+        const isAdmin = path.startsWith("/admin");
+        const isVendor = path.startsWith("/vendor");
+        const refreshPath = isVendor ? "/vendor/auth/refresh" : isAdmin ? "/admin/auth/refresh" : "/auth/refresh";
         const refreshToken = localStorage.getItem("refreshToken");
         const refreshConfig = { withCredentials: true };
         if (refreshToken) {

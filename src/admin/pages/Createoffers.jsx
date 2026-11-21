@@ -22,15 +22,12 @@ import {
   Zap,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import axios from "axios";
 import AdminLayout from "../components/AdminLayout";
+import api from "../../services/api";
 
-const API = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api", withCredentials: true });
-API.interceptors.request.use((config) => {
-  const token = localStorage.getItem("accessToken");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
+// Shared API client: production-safe base URL (no localhost fallback) + automatic token refresh,
+// so loading / saving an offer in Edit mode works on the deployed Netlify site.
+const API = api;
 
 const offerTypes = [
   { label: "Coupon", icon: Ticket },
@@ -234,6 +231,7 @@ function Createoffers({ onAdminLogout }) {
   const [searchParams] = useSearchParams();
   const editId = searchParams.get("edit");
   const [editLoading, setEditLoading] = useState(Boolean(editId));
+  const [editLoadError, setEditLoadError] = useState("");
   const [selectedOfferType, setSelectedOfferType] = useState("Coupon");
   const [productView, setProductView] = useState("All Products");
   const [productSearch, setProductSearch] = useState("");
@@ -615,6 +613,7 @@ function Createoffers({ onAdminLogout }) {
 
     const loadOffer = async () => {
       setEditLoading(true);
+      setEditLoadError("");
       try {
         const { data } = await API.get(`/coupons/${editId}`);
         const coupon = data?.data;
@@ -652,7 +651,7 @@ function Createoffers({ onAdminLogout }) {
         setDatesConfirmed(Boolean(start && end));
         setSaveError("");
       } catch (err) {
-        if (!cancelled) setSaveError(err.response?.data?.message || "Failed to load this offer for editing");
+        if (!cancelled) setEditLoadError(err.response?.data?.message || "Failed to load this offer for editing. Please go back and try again.");
       } finally {
         if (!cancelled) setEditLoading(false);
       }
@@ -821,6 +820,15 @@ function Createoffers({ onAdminLogout }) {
             </button>
           </div>
         </div>
+
+        {editLoadError ? (
+          <div className="mx-4 mt-4 flex items-center justify-between gap-3 rounded-lg bg-red-50 px-4 py-3 text-[12px] font-semibold text-red-600 sm:mx-6 lg:mx-8">
+            <span>{editLoadError}</span>
+            <button className="shrink-0 underline" onClick={() => window.location.reload()} type="button">
+              Retry
+            </button>
+          </div>
+        ) : null}
 
         <form className="px-4 py-6 sm:px-6 lg:px-8" onSubmit={handleSubmit}>
           <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">

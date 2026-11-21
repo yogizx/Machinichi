@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Ban, BadgeX, BriefcaseBusiness, Building2, Check, ChevronLeft, ChevronRight,
-  ExternalLink, Eye, Globe, ImageIcon, Link, Loader2, Mail, MapPin,
+  ExternalLink, Eye, FileText, Globe, ImageIcon, KeyRound, Link, Loader2, Mail, MapPin,
   MessageCircleMore, Phone, Search, ShieldAlert, ThumbsDown, ThumbsUp, User, Video, X,
 } from "lucide-react";
 import AdminLayout from "../components/AdminLayout";
@@ -25,6 +25,19 @@ const statusStyles = {
 
 const defaultLogo = "https://images.unsplash.com/photo-1504711434969-e33886168d6c?auto=format&fit=crop&w=120&q=80";
 
+const docTypeLabels = {
+  gst_certificate: "GST Certificate",
+  pan_card: "PAN Card",
+  id_proof: "Owner ID Proof",
+  address_proof: "Address Proof",
+  fssai_license: "FSSAI / Trade License",
+  bank_proof: "Bank Proof (Cancelled Cheque)",
+  other: "Other Document",
+};
+
+const formatSize = (bytes = 0) =>
+  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
 const tabs = ["All", "Pending", "Approved", "Rejected"];
 const itemsPerPage = 10;
 
@@ -39,6 +52,7 @@ export default function BusinessApprovals({ onAdminLogout }) {
   const [rejectModal, setRejectModal] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
+  const [notice, setNotice] = useState(null); // { type: "success" | "warning" | "error", text }
 
   const statusMap = { All: null, Pending: "pending", Approved: "approved", Rejected: "rejected" };
 
@@ -80,13 +94,36 @@ export default function BusinessApprovals({ onAdminLogout }) {
     return { all, pending, approved, rejected };
   }, [businesses]);
 
+  // Approve creates the vendor login and e-mails the user id + temporary password + login URL.
   const handleApprove = async (id) => {
     setActionLoading(true);
     try {
-      await fetch(`${API_BASE}/${id}/approve`, { method: "POST", headers: getAuthHeaders() });
-      setSelected(null);
+      const res = await fetch(`${API_BASE}/${id}/approve`, { method: "POST", headers: getAuthHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setNotice({ type: "error", text: data.message || "Could not approve this vendor." });
+      } else {
+        setNotice({ type: data.emailSent === false ? "warning" : "success", text: data.message });
+        setSelected(null);
+        fetchBusinesses();
+      }
+    } catch {
+      setNotice({ type: "error", text: "Network error while approving. Please try again." });
+    }
+    setActionLoading(false);
+  };
+
+  const handleResend = async (id) => {
+    setActionLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/${id}/resend-credentials`, { method: "POST", headers: getAuthHeaders() });
+      const data = await res.json().catch(() => ({}));
+      setNotice({ type: res.ok ? "success" : "error", text: data.message || (res.ok ? "Login details sent." : "Could not resend login details.") });
+      if (res.ok && data.business) setSelected(data.business);
       fetchBusinesses();
-    } catch {}
+    } catch {
+      setNotice({ type: "error", text: "Network error. Please try again." });
+    }
     setActionLoading(false);
   };
 
@@ -106,24 +143,56 @@ export default function BusinessApprovals({ onAdminLogout }) {
     setActionLoading(false);
   };
 
+  // KYC documents are private: fetch with the admin token, then open in a new tab.
+  const openDocument = async (businessId, doc) => {
+    const tab = window.open("", "_blank");
+    try {
+      const res = await fetch(`${API_BASE}/${businessId}/documents/${doc._id}`, { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Document unavailable");
+      const type = res.headers.get("content-type") || "";
+      const target = type.includes("application/json")
+        ? (await res.json()).url
+        : URL.createObjectURL(await res.blob());
+      if (tab) tab.location.href = target;
+    } catch {
+      if (tab) tab.close();
+      setNotice({ type: "error", text: "Could not open that document." });
+    }
+  };
+
+  const noticeStyles = {
+    success: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    warning: "border-amber-200 bg-amber-50 text-amber-800",
+    error: "border-red-200 bg-red-50 text-red-700",
+  };
+
   return (
     <AdminLayout onAdminLogout={onAdminLogout}>
       <div className="min-h-screen bg-[#fff7f0] px-4 py-5 text-[#21150f] sm:px-6 lg:px-8">
         <header className="flex flex-col gap-4 border-b border-[#eaded6] pb-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-[22px] font-black tracking-[-0.02em] text-[#7a1f06]">Business Approvals</h1>
-            <p className="mt-1 text-[13px] font-medium text-[#8a7a70]">Review and manage business listing requests</p>
+            <p className="mt-1 text-[13px] font-medium text-[#8a7a70]">Review vendor applications — approving sends the vendor their login details</p>
           </div>
           <label className="flex h-10 items-center gap-3 rounded-full border border-[#eaded6] bg-white px-4 text-[#9a8a80] transition focus-within:border-[#c35416] focus-within:shadow-[0_0_0_4px_rgba(195,84,22,0.1)] sm:w-[320px]">
             <Search size={16} />
             <input className="min-w-0 flex-1 bg-transparent text-[13px] font-semibold text-[#322118] outline-none placeholder:text-[#9a8a80]"
-              placeholder="Search businesses, owners..."
+              placeholder="Search businesses, owners, GSTIN..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
             />
           </label>
         </header>
+
+        {notice && (
+          <div className={`mt-5 flex items-start justify-between gap-3 rounded-[10px] border px-4 py-3 text-[13px] font-semibold ${noticeStyles[notice.type]}`}>
+            <span>{notice.text}</span>
+            <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 opacity-70 transition hover:opacity-100">
+              <X size={15} />
+            </button>
+          </div>
+        )}
 
         <section className="mt-6 grid gap-0 overflow-hidden rounded-[10px] border border-[#eaded6] bg-white shadow-[0_12px_24px_rgba(66,36,18,0.05)] sm:grid-cols-2 xl:grid-cols-4">
           {[
@@ -252,6 +321,8 @@ export default function BusinessApprovals({ onAdminLogout }) {
           onClose={() => setSelected(null)}
           onApprove={() => handleApprove(selected._id)}
           onReject={() => { setRejectModal(selected._id); setRejectReason(""); }}
+          onResend={() => handleResend(selected._id)}
+          onOpenDocument={(doc) => openDocument(selected._id, doc)}
           actionLoading={actionLoading}
         />
       )}
@@ -269,7 +340,7 @@ export default function BusinessApprovals({ onAdminLogout }) {
   );
 }
 
-function BusinessDetailModal({ business, onClose, onApprove, onReject, actionLoading }) {
+function BusinessDetailModal({ business, onClose, onApprove, onReject, onResend, onOpenDocument, actionLoading }) {
   const b = business;
 
   const sections = [
@@ -277,7 +348,7 @@ function BusinessDetailModal({ business, onClose, onApprove, onReject, actionLoa
       title: "Basic Information",
       icon: Building2,
       fields: [
-        { label: "Business Name", value: b.name },
+        { label: "Business / Store Name", value: b.name },
         { label: "Tagline", value: b.tagline },
         { label: "Category", value: b.category },
         { label: "Description", value: b.description, full: true },
@@ -291,6 +362,16 @@ function BusinessDetailModal({ business, onClose, onApprove, onReject, actionLoa
         { label: "Designation", value: b.ownerDesignation },
         { label: "LinkedIn", value: b.ownerLinkedin, link: true },
         { label: "Website", value: b.ownerWebsite, link: true },
+      ],
+    },
+    {
+      title: "Business Registration",
+      icon: FileText,
+      fields: [
+        { label: "GSTIN", value: b.gstin },
+        { label: "PAN", value: b.panNumber },
+        { label: "FSSAI Number", value: b.fssaiNumber },
+        { label: "Years in Business", value: b.yearsInBusiness },
       ],
     },
     {
@@ -309,6 +390,7 @@ function BusinessDetailModal({ business, onClose, onApprove, onReject, actionLoa
         { label: "Address", value: b.address },
         { label: "City", value: b.city },
         { label: "State", value: b.state },
+        { label: "District", value: b.district },
         { label: "Pincode", value: b.pincode },
       ],
     },
@@ -325,6 +407,8 @@ function BusinessDetailModal({ business, onClose, onApprove, onReject, actionLoa
 
   const images = b.images || [];
   const hasImages = images.length > 0;
+  const documents = b.documents || [];
+  const isVendorAccount = b.status === "approved" && b.vendorCode;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#21150f]/50 px-4 py-6 backdrop-blur-sm" onClick={onClose}>
@@ -371,6 +455,29 @@ function BusinessDetailModal({ business, onClose, onApprove, onReject, actionLoa
           </div>
 
           <div className="px-6 sm:px-8 pb-4 mt-6 space-y-5">
+            {isVendorAccount && (
+              <div className="rounded-[12px] border border-emerald-200 bg-emerald-50 p-5">
+                <div className="flex items-center gap-2.5 mb-3">
+                  <KeyRound size={18} className="text-emerald-700" />
+                  <h3 className="text-[14px] font-black text-emerald-800">Vendor Account</h3>
+                </div>
+                <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.08em] text-emerald-700/80">Vendor User ID</p>
+                    <p className="mt-1 font-mono text-[14px] font-black text-emerald-900">{b.vendorCode}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.08em] text-emerald-700/80">Login details e-mail</p>
+                    <p className="mt-1 text-[13px] font-semibold text-emerald-900">
+                      {b.credentialsEmailStatus === "sent"
+                        ? `Sent${b.credentialsSentAt ? ` on ${new Date(b.credentialsSentAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}` : ""}`
+                        : b.credentialsEmailStatus === "failed" ? "Failed to send — use Resend" : "—"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {sections.map((section) => {
               const hasValue = section.fields.some((f) => f.value);
               if (!hasValue) return null;
@@ -406,6 +513,32 @@ function BusinessDetailModal({ business, onClose, onApprove, onReject, actionLoa
                 </div>
               );
             })}
+
+            {documents.length > 0 && (
+              <div className="rounded-[12px] border border-[#ede3da] bg-white p-5">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <span className="grid h-8 w-8 place-items-center rounded-[8px] bg-[#fff1e8] text-[#c7470a]">
+                    <FileText size={16} strokeWidth={2.2} />
+                  </span>
+                  <h3 className="text-[14px] font-black tracking-[-0.01em] text-[#2b1b12]">Submitted Documents ({documents.length})</h3>
+                </div>
+                <div className="space-y-2.5">
+                  {documents.map((doc) => (
+                    <div key={doc._id} className="flex items-center gap-3 rounded-[8px] border border-[#ede3da] bg-[#fcf8f4] px-4 py-3">
+                      <FileText size={18} className="shrink-0 text-[#c35416]" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13px] font-black text-[#2f2119]">{docTypeLabels[doc.type] || doc.label || "Document"}</p>
+                        <p className="truncate text-[11px] text-[#9a8a80]">{doc.originalName} · {formatSize(doc.size)}</p>
+                      </div>
+                      <button onClick={() => onOpenDocument(doc)}
+                        className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-[#dfcfc3] bg-white px-3.5 text-[12px] font-black text-[#c35416] transition hover:border-[#c35416] hover:bg-[#fff7f0]">
+                        <Eye size={13} /> View
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {socialLinks.length > 0 && (
               <div className="rounded-[12px] border border-[#ede3da] bg-white p-5">
@@ -480,14 +613,24 @@ function BusinessDetailModal({ business, onClose, onApprove, onReject, actionLoa
                 <button onClick={onApprove} disabled={actionLoading}
                   className="flex h-11 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#16a34a] to-[#22c55e] px-6 text-[13px] font-black text-white shadow-[0_8px_18px_rgba(22,163,74,0.22)] transition hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0">
                   {actionLoading ? <Loader2 size={16} className="animate-spin" /> : <ThumbsUp size={15} />}
-                  Approve
+                  Approve &amp; send login
                 </button>
               </>
             ) : (
-              <button onClick={onClose}
-                className="flex h-11 items-center justify-center gap-2 rounded-full bg-[#c35416] px-6 text-[13px] font-black text-white shadow-[0_8px_18px_rgba(195,84,22,0.2)] transition hover:-translate-y-0.5">
-                <Check size={15} /> Close
-              </button>
+              <>
+                {isVendorAccount && (
+                  <button onClick={onResend} disabled={actionLoading}
+                    title="Generates a new temporary password and e-mails it"
+                    className="flex h-11 items-center justify-center gap-2 rounded-full border-2 border-[#dfcfc3] bg-white px-6 text-[13px] font-black text-[#7a3a12] transition hover:border-[#c35416] hover:bg-[#fff7f0] disabled:opacity-50">
+                    {actionLoading ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={15} />}
+                    Resend login details
+                  </button>
+                )}
+                <button onClick={onClose}
+                  className="flex h-11 items-center justify-center gap-2 rounded-full bg-[#c35416] px-6 text-[13px] font-black text-white shadow-[0_8px_18px_rgba(195,84,22,0.2)] transition hover:-translate-y-0.5">
+                  <Check size={15} /> Close
+                </button>
+              </>
             )}
           </div>
         </div>

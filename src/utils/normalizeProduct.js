@@ -24,6 +24,25 @@ function resolveBadge(p, discountPercent) {
   return null;
 }
 
+// Badge shown on the /product card image: whatever the admin / vendor picked under
+// "Product Badges" (badges[0]) or, if none, the one "Visibility Flag" they picked.
+// Never falls back to the discount percentage (that is already shown beside the price).
+const VISIBILITY_FLAG_LABELS = [
+  ["isFeatured", "FEATURED"],
+  ["isTrending", "TRENDING"],
+  ["isBestSeller", "BEST SELLER"],
+  ["isNewArrival", "NEW ARRIVAL"],
+  ["isLimitedOffer", "LIMITED OFFER"],
+  ["isRecommended", "RECOMMENDED"],
+];
+
+function resolveSelectedBadge(p) {
+  const selectedBadge = Array.isArray(p.badges) ? String(p.badges[0] || "").trim() : "";
+  if (selectedBadge) return selectedBadge.toUpperCase();
+  const flag = VISIBILITY_FLAG_LABELS.find(([key]) => p[key] === true);
+  return flag ? flag[1] : null;
+}
+
 export const BADGE_COLORS = {
   "BEST SELLER": "bg-[#fd761a]",
   "MOST POPULAR": "bg-[#2563eb]",
@@ -31,6 +50,8 @@ export const BADGE_COLORS = {
   "NEW ARRIVAL": "bg-[#16a34a]",
   "LIMITED STOCK": "bg-[#dc2626]",
   "ORGANIC": "bg-[#16a34a]",
+  "FEATURED": "bg-[#d97706]",
+  "RECOMMENDED": "bg-[#0d9488]",
 };
 
 export function badgeColor(badge) {
@@ -43,6 +64,22 @@ export function badgeColor(badge) {
 
 function slug(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+}
+
+const UNIT_SHORT = {
+  kilogram: "kg", kg: "kg", gram: "g", g: "g", litre: "L", liter: "L", l: "L", millilitre: "ml", milliliter: "ml", ml: "ml",
+};
+
+// Pack size / weight shown on the /product card: only values the admin / vendor actually entered.
+function resolveWeightLabel(p) {
+  const text = String(p.measurement?.packageWeight || p.productHighlights?.quantity || p.size || "").trim();
+  if (text) return text;
+  const weight = Number(p.weight);
+  if (weight > 0) {
+    const unit = UNIT_SHORT[String(p.unitType || "").trim().toLowerCase()];
+    return unit ? `${weight}${unit}` : "";
+  }
+  return "";
 }
 
 export function normalizeProduct(p) {
@@ -63,8 +100,11 @@ export function normalizeProduct(p) {
   const origin = p.origin || "";
   const category = p.category?.name || p.category || "General";
   const sizes = p.variants?.map((v) => v.size) || p.sizes || ["500g", "1kg"];
+  // Only sizes the admin / vendor really entered (used by the /product card; `sizes` above keeps its legacy fallback for other pages).
+  const realSizes = (Array.isArray(p.variants) ? p.variants.map((v) => v?.size) : Array.isArray(p.sizes) ? p.sizes : []).filter(Boolean);
   const tags = p.tags || [];
   const badge = resolveBadge(p, discountPercent);
+  const cardBadge = resolveSelectedBadge(p);
   const unit = p.unit || "piece";
   const description = p.description || "";
 
@@ -91,8 +131,14 @@ export function normalizeProduct(p) {
     rating,
     reviewCount,
     badge,
+    cardBadge,
+    // Real data only (used by the /product card): no placeholder values are invented here.
+    shortDescription: String(p.shortDescription || p.description || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(),
+    weightLabel: resolveWeightLabel(p),
+    hasImage: Boolean(p.images?.[0]?.url || p.image),
     tags,
     sizes,
+    realSizes,
     category,
     unit,
     discountPercent,

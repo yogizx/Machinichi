@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import api from "../../services/api";
 import AdminLayout from "../components/AdminLayout";
+import BulkUploadModal from "../components/BulkUploadModal";
 
 const API = api;
 
@@ -75,6 +76,7 @@ export default function Inventory({ onAdminLogout }) {
   const [manageApiError, setManageApiError] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
   const [showBulk, setShowBulk] = useState(false);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [bulkField, setBulkField] = useState("quantity");
   const [bulkValue, setBulkValue] = useState("");
   const [bulkSaving, setBulkSaving] = useState(false);
@@ -556,6 +558,9 @@ export default function Inventory({ onAdminLogout }) {
                 <SlidersHorizontal size={14} /> Bulk Adjust ({selectedIds.length})
               </button>
             )}
+            <button onClick={() => setShowBulkUpload(true)} className="inline-flex h-11 items-center gap-2 rounded-xl border border-[#fd761a] bg-white px-5 text-[13px] font-black text-[#fd761a] transition hover:bg-[#fff2ee]" type="button">
+              <Upload size={15} /> Bulk Upload
+            </button>
             <button onClick={openAddModal} className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#fd761a] px-6 text-[13px] font-black text-white shadow-[0_4px_12px_rgba(253,118,26,0.15)] transition hover:bg-[#e86710] hover:-translate-y-0.5" type="button">
               <PlusCircle size={15} /> Add New Product
             </button>
@@ -743,6 +748,16 @@ export default function Inventory({ onAdminLogout }) {
               </div>
             </footer>
           </div>
+        )}
+
+        {/* Bulk upload (template) */}
+        {showBulkUpload && (
+          <BulkUploadModal
+            api={API}
+            categories={categories}
+            onClose={() => setShowBulkUpload(false)}
+            onDone={() => fetchProducts(1)}
+          />
         )}
 
         {/* Add/Edit Product modal */}

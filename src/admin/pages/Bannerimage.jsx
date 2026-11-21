@@ -6,10 +6,14 @@ import {
   Upload,
   Link,
   ArrowRight,
-  Loader2
+  Loader2,
+  Megaphone,
+  X,
+  ImageIcon
 } from "lucide-react";
 import AdminLayout from "../components/AdminLayout";
 import api from "../../services/api";
+import { MAX_TRUST_BAR_ITEMS, TRUST_BAR_ICONS } from "../../utils/trustBarIcons";
 
 function Bannerimage({ onAdminLogout }) {
   const [banners, setBanners] = useState([]);
@@ -271,6 +275,10 @@ function Bannerimage({ onAdminLogout }) {
           </button>
         </div>
 
+        <PopupManager />
+
+        <TrustBarManager />
+
         {/* Banners List */}
         <div className="flex flex-col gap-8">
           {banners.map((banner, index) => {
@@ -353,15 +361,15 @@ function Bannerimage({ onAdminLogout }) {
                   <div className="xl:col-span-7 flex flex-col gap-6">
                     
                     {/* Settings Row (Image selector and Content position side by side) */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))] gap-6">
                       
                       {/* Image Selector Panel */}
-                      <div className="flex flex-col gap-2 bg-[#fffbf9] border border-[#ead9cc]/50 rounded-xl p-4">
+                      <div className="flex min-w-0 flex-col gap-2 bg-[#fffbf9] border border-[#ead9cc]/50 rounded-xl p-4">
                         <label className="block text-[11px] font-black text-[#5c4a3e] uppercase tracking-wider">
                           Banner Image <span className="text-[#fd761a] font-bold">*</span>
                         </label>
                         
-                        <div className="flex gap-4 items-center mt-1">
+                        <div className="flex flex-wrap gap-4 items-center mt-1">
                           <div className="relative h-16 w-28 shrink-0 rounded-lg overflow-hidden border border-[#ead9cc] bg-white shadow-sm flex items-center justify-center">
                             {isUploading ? (
                               <div className="absolute inset-0 bg-white/80 flex items-center justify-center">
@@ -375,7 +383,7 @@ function Bannerimage({ onAdminLogout }) {
                             />
                           </div>
                           
-                          <div className="flex-1 flex flex-col gap-1.5">
+                          <div className="flex-1 min-w-[150px] flex flex-col gap-1.5">
                             <input
                               type="file"
                               accept="image/*"
@@ -387,7 +395,7 @@ function Bannerimage({ onAdminLogout }) {
                               onClick={() => triggerFileInput(banner._id)}
                               type="button"
                               disabled={isUploading}
-                              className="w-max flex items-center justify-center gap-1.5 rounded-lg border border-[#fd761a] bg-white text-[#fd761a] hover:bg-[#fff2ee] px-3.5 py-1.5 text-[12px] font-black transition duration-200 cursor-pointer shadow-sm hover:shadow disabled:opacity-50"
+                              className="w-max whitespace-nowrap flex items-center justify-center gap-1.5 rounded-lg border border-[#fd761a] bg-white text-[#fd761a] hover:bg-[#fff2ee] px-3.5 py-1.5 text-[12px] font-black transition duration-200 cursor-pointer shadow-sm hover:shadow disabled:opacity-50"
                             >
                               <Upload size={13} strokeWidth={2.5} />
                               Change Image
@@ -642,6 +650,484 @@ function Bannerimage({ onAdminLogout }) {
         </div>
       </div>
     </AdminLayout>
+  );
+}
+
+function PopupManager() {
+  const [popup, setPopup] = useState(null);
+  const [imageUrl, setImageUrl] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [isActive, setIsActive] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState(null);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get("/banners/popup");
+        const p = data?.data;
+        if (p) {
+          setPopup(p);
+          setImageUrl(p.imageUrl || "");
+          setLinkUrl(p.linkUrl || "");
+          setIsActive(p.isActive !== false);
+        }
+      } catch {
+        /* nothing saved yet */
+      }
+      setLoading(false);
+    })();
+  }, []);
+
+  const isValidLink = (value) => {
+    const t = value.trim();
+    if (!t) return true;
+    if (t.startsWith("/") && !t.startsWith("//")) return true;
+    try {
+      const u = new URL(t);
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setMessage({ type: "error", text: "Please choose an image file (PNG, JPG or WebP)." });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setMessage({ type: "error", text: "Image must be 5 MB or smaller." });
+      return;
+    }
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      setUploading(true);
+      setMessage(null);
+      const { data } = await api.post("/banners/popup/upload", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 60000,
+      });
+      if (data?.imageUrl) {
+        setImageUrl(data.imageUrl);
+        setMessage({ type: "info", text: "Image uploaded. Click \"Save Popup\" to publish it." });
+      }
+    } catch (err) {
+      setMessage({ type: "error", text: err.response?.data?.message || "Image upload failed. Please try again." });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!imageUrl) {
+      setMessage({ type: "error", text: "Please upload a popup image first." });
+      return;
+    }
+    if (!isValidLink(linkUrl)) {
+      setMessage({ type: "error", text: "URL must start with http://, https:// or \"/\" (e.g. /product)." });
+      return;
+    }
+    try {
+      setSaving(true);
+      setMessage(null);
+      const { data } = await api.put("/banners/popup", { imageUrl, linkUrl: linkUrl.trim(), isActive });
+      setPopup(data?.data || null);
+      setMessage({ type: "success", text: "Popup saved. It will appear on the home page." });
+    } catch (err) {
+      setMessage({ type: "error", text: err.response?.data?.message || "Failed to save popup." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    if (!confirm("Remove the home page popup?")) return;
+    try {
+      await api.delete("/banners/popup");
+      setPopup(null);
+      setImageUrl("");
+      setLinkUrl("");
+      setIsActive(true);
+      setMessage({ type: "success", text: "Popup removed." });
+    } catch (err) {
+      setMessage({ type: "error", text: err.response?.data?.message || "Failed to remove popup." });
+    }
+  };
+
+  const msgClass =
+    message?.type === "success"
+      ? "bg-green-50 text-green-700"
+      : message?.type === "error"
+        ? "bg-red-50 text-red-600"
+        : "bg-[#fff5ee] text-[#9b4518]";
+
+  return (
+    <div className="mb-8 bg-white border border-[#ead9cc] rounded-[20px] p-6 md:p-8 shadow-[0_12px_36px_rgba(64,35,17,0.04)]">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#f4e9df] pb-5 mb-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] bg-[#fff0e6] text-[#8d3c12]">
+            <Megaphone size={19} strokeWidth={2.2} />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-[18px] font-black text-[#2a1409]">Home Page Popup</h2>
+            <p className="text-[12px] font-semibold text-[#796d66]">
+              Shown to visitors on the home page. Clicking / tapping it opens the URL below.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[14px] font-black text-[#44352d]">Active</span>
+          <button
+            onClick={() => setIsActive((v) => !v)}
+            type="button"
+            className={`relative inline-flex h-[26px] w-[48px] shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+              isActive ? "bg-[#fd761a]" : "bg-[#ead9cc]"
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-[22px] w-[22px] transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                isActive ? "translate-x-[22px]" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-8">
+          <Loader2 size={22} className="animate-spin text-[#fd761a]" />
+        </div>
+      ) : (
+        <div className="grid gap-6 [grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))]">
+          <div className="min-w-0 rounded-xl border border-[#ead9cc]/50 bg-[#fffbf9] p-4">
+            <label className="block text-[11px] font-black uppercase tracking-wider text-[#5c4a3e]">
+              Popup Image <span className="font-bold text-[#fd761a]">*</span>
+            </label>
+            <div className="mt-3 flex flex-wrap items-center gap-4">
+              <div className="relative grid h-28 w-28 shrink-0 place-items-center overflow-hidden rounded-lg border border-[#ead9cc] bg-white shadow-sm">
+                {uploading ? (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80">
+                    <Loader2 size={20} className="animate-spin text-[#fd761a]" />
+                  </div>
+                ) : null}
+                {imageUrl ? (
+                  <img src={imageUrl} alt="Popup preview" className="h-full w-full object-contain" />
+                ) : (
+                  <ImageIcon size={28} className="text-[#c4b6ad]" />
+                )}
+              </div>
+              <div className="flex min-w-[150px] flex-1 flex-col gap-1.5">
+                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  type="button"
+                  disabled={uploading}
+                  className="flex w-max items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[#fd761a] bg-white px-3.5 py-1.5 text-[12px] font-black text-[#fd761a] shadow-sm transition duration-200 hover:bg-[#fff2ee] disabled:opacity-50 cursor-pointer"
+                >
+                  <Upload size={13} strokeWidth={2.5} />
+                  {imageUrl ? "Change Image" : "Upload Image"}
+                </button>
+                <span className="text-[10px] font-bold leading-snug text-[#a6958a]">PNG, JPG or WebP · max 5 MB</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="min-w-0 rounded-xl border border-[#ead9cc]/50 bg-[#fffbf9] p-4">
+            <label className="block text-[11px] font-black uppercase tracking-wider text-[#5c4a3e]">
+              Popup Redirect URL
+            </label>
+            <div className="relative mt-3 flex items-center">
+              <input
+                type="text"
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                placeholder="e.g. /product or https://example.com/offer"
+                className="w-full rounded-xl border border-[#ead9cc] bg-white py-2.5 pl-4 pr-9 text-[14px] text-[#2d1a10] shadow-sm outline-none transition duration-200 placeholder-[#c4b6ad] focus:border-[#fd761a] focus:ring-1 focus:ring-[#fd761a]"
+              />
+              <Link size={14} className="absolute right-3.5 text-[#a6958a]" />
+            </div>
+            <p className="mt-2 text-[11px] font-semibold leading-snug text-[#8c7a6e]">
+              Visitors who click / touch the popup are redirected here. Use a page path like /product or a full link. Leave empty for no redirect.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {message ? (
+        <p className={`mt-5 rounded-lg px-4 py-2.5 text-[12px] font-bold ${msgClass}`}>{message.text}</p>
+      ) : null}
+
+      <div className="mt-5 flex flex-wrap items-center justify-end gap-3 border-t border-[#f4e9df] pt-4">
+        {popup ? (
+          <button
+            onClick={handleRemove}
+            type="button"
+            className="flex items-center gap-1.5 rounded-lg border border-[#ffcdb4] bg-[#fff0e9] px-4 py-2 text-xs font-black text-[#9f3509] transition hover:bg-[#ffe1d1] cursor-pointer"
+          >
+            <X size={13} strokeWidth={2.6} />
+            Remove Popup
+          </button>
+        ) : null}
+        <button
+          onClick={handleSave}
+          type="button"
+          disabled={saving || uploading}
+          className="flex items-center justify-center gap-1.5 rounded-lg bg-[#fd761a] px-4.5 py-2 text-xs font-black text-white shadow-md transition duration-200 hover:-translate-y-0.5 hover:bg-[#e05e0f] active:translate-y-0 disabled:opacity-50 cursor-pointer"
+        >
+          {saving ? <Loader2 size={13} className="animate-spin" /> : null}
+          Save Popup
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TrustBarManager() {
+  const [items, setItems] = useState([]);
+  const [isActive, setIsActive] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get("/banners/trust-bar");
+        const d = data?.data;
+        setItems(Array.isArray(d?.items) ? d.items : []);
+        setIsActive(d ? d.isActive !== false : true);
+      } catch {
+        setItems([]);
+      }
+      setLoading(false);
+    })();
+  }, []);
+
+  const updateItem = (index, field, value) => {
+    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
+    setMessage(null);
+  };
+
+  const addItem = () => {
+    if (items.length >= MAX_TRUST_BAR_ITEMS) return;
+    setItems((prev) => [...prev, { icon: "star", title: "", subtitle: "" }]);
+    setMessage(null);
+  };
+
+  const removeItem = (index) => {
+    setItems((prev) => prev.filter((_, i) => i !== index));
+    setMessage(null);
+  };
+
+  const handleSave = async () => {
+    const emptyAt = items.findIndex((item) => !item.title.trim());
+    if (emptyAt !== -1) {
+      setMessage({ type: "error", text: `Highlight ${emptyAt + 1}: please enter a title.` });
+      return;
+    }
+    try {
+      setSaving(true);
+      setMessage(null);
+      const { data } = await api.put("/banners/trust-bar", {
+        items: items.map((item) => ({
+          icon: item.icon,
+          title: item.title.trim(),
+          subtitle: (item.subtitle || "").trim(),
+        })),
+        isActive,
+      });
+      if (data?.data?.items) setItems(data.data.items);
+      setMessage({ type: "success", text: "Highlights saved. They now show on the home page banner." });
+    } catch (err) {
+      setMessage({ type: "error", text: err.response?.data?.message || "Failed to save highlights." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const msgClass =
+    message?.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600";
+  const HeaderIcon = TRUST_BAR_ICONS.leaf.Icon;
+
+  return (
+    <div className="mb-8 bg-white border border-[#ead9cc] rounded-[20px] p-6 md:p-8 shadow-[0_12px_36px_rgba(64,35,17,0.04)]">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#f4e9df] pb-5 mb-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] bg-[#fff0e6] text-[#8d3c12]">
+            <HeaderIcon size={19} strokeWidth={2.2} />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-[18px] font-black text-[#2a1409]">Banner Highlights</h2>
+            <p className="text-[12px] font-semibold text-[#796d66]">
+              The row of short selling points shown at the bottom of the home page banner (up to {MAX_TRUST_BAR_ITEMS}).
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[14px] font-black text-[#44352d]">Active</span>
+          <button
+            onClick={() => setIsActive((v) => !v)}
+            type="button"
+            className={`relative inline-flex h-[26px] w-[48px] shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+              isActive ? "bg-[#fd761a]" : "bg-[#ead9cc]"
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-[22px] w-[22px] transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                isActive ? "translate-x-[22px]" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-8">
+          <Loader2 size={22} className="animate-spin text-[#fd761a]" />
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-5 [grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))]">
+            {items.map((item, index) => (
+              <div key={index} className="min-w-0 rounded-xl border border-[#ead9cc]/50 bg-[#fffbf9] p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px] font-black uppercase tracking-wider text-[#5c4a3e]">
+                    Highlight {index + 1}
+                  </span>
+                  <button
+                    onClick={() => removeItem(index)}
+                    type="button"
+                    title="Remove highlight"
+                    className="rounded-lg p-1.5 text-[#c2410c] transition hover:bg-[#fff2ee] hover:text-[#ef4444] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+                  >
+                    <Trash2 size={16} strokeWidth={2.2} />
+                  </button>
+                </div>
+
+                <label className="mt-3 block text-[11px] font-black uppercase tracking-wider text-[#5c4a3e]">Icon</label>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {Object.entries(TRUST_BAR_ICONS).map(([key, { label, Icon }]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      title={label}
+                      aria-label={label}
+                      aria-pressed={item.icon === key}
+                      onClick={() => updateItem(index, "icon", key)}
+                      className={`grid h-9 w-9 place-items-center rounded-lg border transition cursor-pointer ${
+                        item.icon === key
+                          ? "border-[#fd761a] bg-[#fff0e6] text-[#fd761a] shadow-sm"
+                          : "border-[#ead9cc] bg-white text-[#796d66] hover:border-[#fd761a] hover:text-[#fd761a]"
+                      }`}
+                    >
+                      <Icon size={17} strokeWidth={2} />
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-3 flex items-center justify-between">
+                  <label className="text-[11px] font-black uppercase tracking-wider text-[#5c4a3e]">
+                    Title <span className="font-bold text-[#fd761a]">*</span>
+                  </label>
+                  <span className="text-[10px] font-bold text-[#a6958a]">{item.title.length}/40</span>
+                </div>
+                <input
+                  type="text"
+                  maxLength={40}
+                  value={item.title}
+                  onChange={(e) => updateItem(index, "title", e.target.value)}
+                  placeholder="e.g. 100% Natural"
+                  className="mt-1.5 w-full rounded-xl border border-[#ead9cc] bg-white px-4 py-2.5 text-[14px] text-[#2d1a10] shadow-sm outline-none transition duration-200 placeholder-[#c4b6ad] focus:border-[#fd761a] focus:ring-1 focus:ring-[#fd761a]"
+                />
+
+                <div className="mt-3 flex items-center justify-between">
+                  <label className="text-[11px] font-black uppercase tracking-wider text-[#5c4a3e]">Subtitle</label>
+                  <span className="text-[10px] font-bold text-[#a6958a]">{(item.subtitle || "").length}/60</span>
+                </div>
+                <input
+                  type="text"
+                  maxLength={60}
+                  value={item.subtitle || ""}
+                  onChange={(e) => updateItem(index, "subtitle", e.target.value)}
+                  placeholder="e.g. No Additives"
+                  className="mt-1.5 w-full rounded-xl border border-[#ead9cc] bg-white px-4 py-2.5 text-[14px] text-[#2d1a10] shadow-sm outline-none transition duration-200 placeholder-[#c4b6ad] focus:border-[#fd761a] focus:ring-1 focus:ring-[#fd761a]"
+                />
+              </div>
+            ))}
+          </div>
+
+          {items.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-[#ead9cc] bg-[#fffbf9] px-4 py-6 text-center text-[13px] font-semibold text-[#796d66]">
+              No highlights yet. Add one to show a highlights bar on the home page banner.
+            </p>
+          ) : null}
+
+          {items.length < MAX_TRUST_BAR_ITEMS ? (
+            <button
+              onClick={addItem}
+              type="button"
+              className="mt-5 flex items-center gap-1.5 rounded-lg border border-dashed border-[#fd761a] bg-white px-4 py-2 text-xs font-black text-[#fd761a] transition hover:bg-[#fff2ee] cursor-pointer"
+            >
+              <Plus size={14} strokeWidth={2.8} />
+              Add Highlight
+            </button>
+          ) : null}
+
+          {/* Live preview */}
+          {items.length > 0 ? (
+            <span className="mt-6 block text-[11px] font-black uppercase tracking-wider text-[#44352d]">Live Preview</span>
+          ) : null}
+          <div className={`mt-2 overflow-x-auto rounded-2xl border border-[#ead9cc] bg-[#5a3322] p-4 ${items.length === 0 ? "hidden" : ""}`}>
+            <ul className={`grid min-w-[560px] grid-flow-col auto-cols-fr rounded-[18px] border border-white/15 bg-black/35 py-3.5 shadow-sm ${isActive ? "" : "opacity-50"}`}>
+              {items.map((item, index) => {
+                const Icon = TRUST_BAR_ICONS[item.icon]?.Icon || HeaderIcon;
+                return (
+                  <li
+                    key={index}
+                    className={`flex min-w-0 items-center justify-center gap-2.5 px-3 ${index > 0 ? "border-l border-white/20" : ""}`}
+                  >
+                    <Icon className="shrink-0 text-[#ff8a3d]" size={26} strokeWidth={1.7} />
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-bold leading-tight text-white">{item.title || "Title"}</p>
+                      {item.subtitle ? (
+                        <p className="truncate text-[12px] font-medium leading-tight text-white/80">{item.subtitle}</p>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            {!isActive ? (
+              <p className="mt-2 text-[11px] font-bold text-[#9b4518]">Inactive: this bar is hidden on the home page.</p>
+            ) : null}
+          </div>
+        </>
+      )}
+
+      {message ? (
+        <p className={`mt-5 rounded-lg px-4 py-2.5 text-[12px] font-bold ${msgClass}`}>{message.text}</p>
+      ) : null}
+
+      <div className="mt-5 flex flex-wrap items-center justify-end gap-3 border-t border-[#f4e9df] pt-4">
+        <button
+          onClick={handleSave}
+          type="button"
+          disabled={saving || loading}
+          className="flex items-center justify-center gap-1.5 rounded-lg bg-[#fd761a] px-4.5 py-2 text-xs font-black text-white shadow-md transition duration-200 hover:-translate-y-0.5 hover:bg-[#e05e0f] active:translate-y-0 disabled:opacity-50 cursor-pointer"
+        >
+          {saving ? <Loader2 size={13} className="animate-spin" /> : null}
+          Save Highlights
+        </button>
+      </div>
+    </div>
   );
 }
 

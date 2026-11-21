@@ -6,6 +6,7 @@ export interface IRefreshToken extends mongoose.Document {
   expiresAt: Date;
   isRevoked: boolean;
   replacedByToken?: string;
+  mfaVerified?: boolean;
   userIp?: string;
   userAgent?: string;
 }
@@ -16,6 +17,8 @@ const refreshTokenSchema = new Schema({
   expiresAt: { type: Date, required: true },
   isRevoked: { type: Boolean, default: false },
   replacedByToken: { type: String },
+  // true only when this session was opened with a verified second factor (admin MFA login). Rotation keeps it.
+  mfaVerified: { type: Boolean, default: false },
   userIp: String,
   userAgent: String
 }, { timestamps: true });

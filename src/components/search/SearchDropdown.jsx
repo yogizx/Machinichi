@@ -224,11 +224,11 @@ function SearchDropdown({ onClose }) {
 
   return (
     <div ref={wrapperRef} className="relative w-full" onKeyDown={handleKeyDown}>
-      <div className="flex h-10 items-center rounded-full bg-white/15 pl-3 pr-1.5 text-white/80 transition-all duration-300 focus-within:bg-white/25 focus-within:shadow-[0_0_0_3px_rgba(255,255,255,0.15),0_4px_12px_rgba(0,0,0,0.2)]">
+      <div className="flex h-11 items-center rounded-full border border-white/10 bg-white/[0.14] pl-3.5 pr-1.5 text-white/80 transition-all duration-300 focus-within:bg-white/25 focus-within:shadow-[0_0_0_3px_rgba(255,255,255,0.15),0_4px_12px_rgba(0,0,0,0.2)]">
         {loading ? (
-          <Loader2 size={16} className="animate-spin shrink-0" strokeWidth={2} />
+          <Loader2 size={18} className="animate-spin shrink-0" strokeWidth={2} />
         ) : (
-          <Search size={16} strokeWidth={2} className="shrink-0" />
+          <Search size={18} strokeWidth={2} className="shrink-0" />
         )}
         <input
           ref={inputRef}
@@ -236,8 +236,8 @@ function SearchDropdown({ onClose }) {
           value={query}
           onChange={(e) => { setQuery(e.target.value); setActiveIndex(-1); }}
           onFocus={() => { if (query.length > 0 || history.length > 0) setDismissed(false); }}
-          placeholder="Search products..."
-          className="ml-2 w-[120px] bg-transparent text-[13px] outline-none placeholder:text-white/50 xl:w-[180px]"
+          placeholder="Search for organic staples, rice, flours..."
+          className="ml-2 min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-white/50"
           aria-label="Search products"
           aria-expanded={open}
           aria-autocomplete="list"
@@ -260,7 +260,7 @@ function SearchDropdown({ onClose }) {
         <div
           id="search-dropdown"
           role="listbox"
-          className="absolute left-0 top-full z-50 mt-2 w-full min-w-[340px] origin-top-right animate-[fadeUp_200ms_ease-out_both] overflow-hidden rounded-2xl bg-white shadow-[0_20px_48px_rgba(0,0,0,0.12)] sm:min-w-[420px] lg:min-w-[520px] xl:min-w-[600px]"
+          className="absolute right-0 top-full z-50 mt-2 w-full min-w-[min(340px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] origin-top-right animate-[fadeUp_200ms_ease-out_both] overflow-hidden rounded-2xl bg-white shadow-[0_20px_48px_rgba(0,0,0,0.12)] sm:min-w-[min(420px,calc(100vw-2rem))] lg:min-w-[520px] xl:min-w-[600px]"
           style={{ pointerEvents: "auto" }}
         >
           {query.length === 0 && history.length > 0 ? (
