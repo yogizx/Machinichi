@@ -4,11 +4,16 @@ import { useToast } from "./components/Toaster";
 import api from "./services/api";
 import CartDrawer from "./components/CartDrawer";
 import FlyToCart from "./components/FlyToCart";
+import { PermissionProvider, usePermissions } from "./contexts/PermissionContext";
+import { RequireAccess } from "./components/PermissionGuard";
 
 const AdminDashboard = lazy(() => import("./admin/pages/AdminDashboard"));
 const SubAdminManagement = lazy(() => import("./admin/pages/SubAdminManagement"));
 const RoleManagement = lazy(() => import("./admin/pages/RoleManagement"));
 const Unauthorized = lazy(() => import("./pages/Unauthorized"));
+const AccessControl = lazy(() => import("./admin/pages/AccessControl"));
+const ActivityLogs = lazy(() => import("./admin/pages/ActivityLogs"));
+const AdminActivateInvitation = lazy(() => import("./admin/pages/AdminActivateInvitation"));
 
 const formatINR = (num) => {
   if (num == null || num <= 0) return "₹0";
@@ -77,6 +82,15 @@ function LoadingScreen() {
       </div>
     </div>
   );
+}
+
+// Landing page of the admin panel: the dashboard for those who may see it, otherwise the first module the
+// signed-in staff member is allowed to open (a sub-admin without "report.view" never loads dashboard data).
+function AdminHome({ onAdminLogout }) {
+  const { loading, canAccessPath, defaultRoute } = usePermissions();
+  if (loading) return <LoadingScreen />;
+  if (canAccessPath("/admin/dashboard")) return <AdminDashboard onAdminLogout={onAdminLogout} />;
+  return <Navigate to={defaultRoute} replace />;
 }
 
 function App() {
@@ -157,7 +171,7 @@ function AppLayout() {
         if (data?.user) {
           setIsSignedIn(true);
           setUserId(data.user._id || data.user.id || null);
-          if (data.user.role === "admin" || data.user.role === "super_admin") {
+          if (data.user.role === "admin" || data.user.role === "super_admin" || data.user.role === "sub_admin") {
             setIsAdminSignedIn(true);
           }
           if (data.user.role === "vendor") {
@@ -491,6 +505,9 @@ function AppLayout() {
   };
   const completeAdminLogin = () => setIsAdminSignedIn(true);
   const completeAdminLogout = () => {
+    // End the server-side session too (revokes the refresh token) and forget the stored refresh token.
+    api.post("/admin/auth/logout").catch(() => {});
+    localStorage.removeItem("refreshToken");
     localStorage.removeItem("accessToken");
     localStorage.removeItem("machinichi_cart");
     setCartItems([]);
@@ -525,6 +542,15 @@ function AppLayout() {
     return () => window.removeEventListener("unauthorized", handleUnauthorized);
   }, []);
 
+  // Public page opened from the invitation e-mail (single-use link). It must work while signed out.
+  if (pathname === "/admin/activate-invitation") {
+    return (
+      <Suspense fallback={<LoadingScreen />}>
+        <AdminActivateInvitation />
+      </Suspense>
+    );
+  }
+
   // A vendor who lands on an /admin/* address (e.g. a link inside a re-used page) is sent to the
   // matching /vendor/* page instead of the admin login.
   if (isAdminRoute && isVendorSignedIn && !isAdminSignedIn && !isAdminLoginPage) {
@@ -537,28 +563,34 @@ function AppLayout() {
       return <Adminlogin onAdminLogin={completeAdminLogin} />;
     }
     return (
+      <PermissionProvider key={isAdminSignedIn ? "staff-in" : "staff-out"}>
       <Suspense fallback={<LoadingScreen />}>
         <Routes>
           <Route path="/admin/login" element={<Adminlogin onAdminLogin={completeAdminLogin} />} />
           <Route path="/admin-login" element={<Adminlogin onAdminLogin={completeAdminLogin} />} />
-          <Route path="/admin/dashboard" element={<AdminDashboard onAdminLogout={completeAdminLogout} />} />
-          <Route path="/admin/sub-admins" element={<SubAdminManagement />} />
-          <Route path="/admin/roles" element={<RoleManagement />} />
+          <Route path="/admin/dashboard" element={<AdminHome onAdminLogout={completeAdminLogout} />} />
+          <Route path="/admin/sub-admins" element={<RequireAccess path="/admin/sub-admins"><SubAdminManagement onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/sub-admins/create" element={<RequireAccess path="/admin/sub-admins/create"><SubAdminManagement onAdminLogout={completeAdminLogout} startCreating /></RequireAccess>} />
+          <Route path="/admin/roles" element={<RequireAccess path="/admin/roles"><RoleManagement onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/access-control" element={<RequireAccess path="/admin/access-control"><AccessControl onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/activity-logs" element={<RequireAccess path="/admin/activity-logs"><ActivityLogs onAdminLogout={completeAdminLogout} /></RequireAccess>} />
           <Route path="/admin/unauthorized" element={<Unauthorized />} />
-          <Route path="/admin/profile" element={<Adminprofile onAdminLogout={completeAdminLogout} />} />
-          <Route path="/admin/customers" element={<Customers onAdminLogout={completeAdminLogout} />} />
-          <Route path="/admin/categories" element={<AdminCategories onAdminLogout={completeAdminLogout} />} />
-          <Route path="/admin/product-listing" element={<ProductListing onAdminLogout={completeAdminLogout} favoriteProducts={favoriteProducts} />} />
-          <Route path="/admin/inventory" element={<Inventory onAdminLogout={completeAdminLogout} />} />
-          <Route path="/admin/orders" element={<AdminOrders onAdminLogout={completeAdminLogout} />} />
-          <Route path="/admin/analytics" element={<Analytics onAdminLogout={completeAdminLogout} />} />
-          <Route path="/admin/return-request" element={<ReturnRequest onAdminLogout={completeAdminLogout} />} />
-          <Route path="/admin/businesses" element={<BusinessApprovals onAdminLogout={completeAdminLogout} />} />
-          <Route path="/admin/offers-coupons" element={<OffersCoupons onAdminLogout={completeAdminLogout} />} />
-          <Route path="/admin/create-offers" element={<Createoffers onAdminLogout={completeAdminLogout} />} />
-          <Route path="/admin/banner-images" element={<Bannerimage onAdminLogout={completeAdminLogout} />} />
+          <Route path="/admin/profile" element={<RequireAccess path="/admin/profile"><Adminprofile onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/customers" element={<RequireAccess path="/admin/customers"><Customers onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/categories" element={<RequireAccess path="/admin/categories"><AdminCategories onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/product-listing" element={<RequireAccess path="/admin/product-listing"><ProductListing onAdminLogout={completeAdminLogout} favoriteProducts={favoriteProducts} /></RequireAccess>} />
+          <Route path="/admin/inventory" element={<RequireAccess path="/admin/inventory"><Inventory onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/orders" element={<RequireAccess path="/admin/orders"><AdminOrders onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/analytics" element={<RequireAccess path="/admin/analytics"><Analytics onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/return-request" element={<RequireAccess path="/admin/return-request"><ReturnRequest onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/businesses" element={<RequireAccess path="/admin/businesses"><BusinessApprovals onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/offers-coupons" element={<RequireAccess path="/admin/offers-coupons"><OffersCoupons onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/create-offers" element={<RequireAccess path="/admin/create-offers"><Createoffers onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="/admin/banner-images" element={<RequireAccess path="/admin/banner-images"><Bannerimage onAdminLogout={completeAdminLogout} /></RequireAccess>} />
+          <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
         </Routes>
       </Suspense>
+      </PermissionProvider>
     );
   }
 

@@ -16,6 +16,9 @@ function Adminlogin({ onAdminLogin }) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState("");
+  // Second step (sub-admin accounts): authenticator code or recovery code
+  const [mfaToken, setMfaToken] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
 
   const hasErrors = useMemo(() => Object.keys(errors).length > 0, [errors]);
 
@@ -54,6 +57,14 @@ function Adminlogin({ onAdminLogin }) {
         password: form.password,
       }, { withCredentials: true });
 
+      if (res.data.mfaRequired && res.data.mfaToken) {
+        // Password accepted; no session exists yet. Ask for the second factor.
+        setMfaToken(res.data.mfaToken);
+        setMfaCode("");
+        setLoading(false);
+        return;
+      }
+
       localStorage.setItem("accessToken", res.data.accessToken);
       if (res.data.refreshToken) {
         localStorage.setItem("refreshToken", res.data.refreshToken);
@@ -62,6 +73,35 @@ function Adminlogin({ onAdminLogin }) {
       navigate("/admin/dashboard");
     } catch (err) {
       setServerError(err.response?.data?.message || "Invalid admin credentials.");
+    }
+    setLoading(false);
+  };
+
+  const handleMfaSubmit = async (event) => {
+    event.preventDefault();
+    setServerError("");
+    const code = mfaCode.trim();
+    if (!code) {
+      setServerError("Enter the code from your authenticator app.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API}/mfa/verify`, { mfaToken, code }, { withCredentials: true });
+      localStorage.setItem("accessToken", res.data.accessToken);
+      if (res.data.refreshToken) {
+        localStorage.setItem("refreshToken", res.data.refreshToken);
+      }
+      onAdminLogin?.({ email: form.email.trim(), remember: form.remember });
+      navigate("/admin/dashboard");
+    } catch (err) {
+      const data = err.response?.data;
+      if (data?.code === "MFA_SESSION_EXPIRED") {
+        // The 5-minute verification window ended: start again from the password step.
+        setMfaToken("");
+        setMfaCode("");
+      }
+      setServerError(data?.message || "Verification failed. Please try again.");
     }
     setLoading(false);
   };
@@ -108,6 +148,32 @@ function Adminlogin({ onAdminLogin }) {
             <p className="mt-2 text-[15px] leading-6 text-[#75675f]">Enter your admin credentials to continue.</p>
           </header>
 
+          {mfaToken ? (
+            <form className="rounded-[14px] border border-[#ead8c9] bg-white/82 p-5 shadow-[0_22px_55px_rgba(74,42,22,0.13)] backdrop-blur-md sm:p-6" noValidate onSubmit={handleMfaSubmit}>
+              {serverError && (
+                <div className="mb-4 rounded-[8px] border border-[#f1c8bd] bg-[#fff4f0] px-4 py-3 text-[14px] font-semibold text-[#9b2f15]">{serverError}</div>
+              )}
+              <p className="text-[15px] font-semibold leading-6 text-[#493a31]">Two-step verification. Open your authenticator app and enter the 6-digit code, or use one of your recovery codes.</p>
+              <label className="mt-5 block text-[12px] font-black uppercase tracking-[0.08em] text-[#3d332d]" htmlFor="admin-mfa-code">Verification code</label>
+              <div className="mt-2 flex h-[52px] items-center rounded-[8px] border border-[#dbc7b7] bg-[#fffaf6] px-4 focus-within:border-[#ad4d00] focus-within:bg-white focus-within:shadow-[0_0_0_4px_rgba(173,77,0,0.1)]">
+                <ShieldCheck size={19} strokeWidth={1.9} />
+                <input autoComplete="one-time-code" autoFocus id="admin-mfa-code" maxLength={14}
+                  className="ml-3 min-w-0 flex-1 bg-transparent font-mono text-[18px] font-semibold tracking-[0.25em] text-[#2c1e16] outline-none placeholder:text-[#b6a79e]"
+                  onChange={(event) => { setMfaCode(event.target.value); setServerError(""); }}
+                  placeholder="123456" value={mfaCode}
+                />
+              </div>
+              <button type="submit" disabled={loading}
+                className="mt-6 flex h-[54px] w-full items-center justify-center gap-3 rounded-[8px] bg-[#3a1100] px-6 text-[15px] font-black uppercase tracking-[0.08em] text-white shadow-[0_14px_26px_rgba(58,17,0,0.22)] transition duration-300 hover:-translate-y-0.5 hover:bg-[#ad4d00] disabled:opacity-60"
+              >
+                {loading ? <><Loader2 size={18} className="animate-spin" /> Verifying...</> : "Verify"}
+                <ArrowRight size={20} strokeWidth={2.6} />
+              </button>
+              <button type="button" onClick={() => { setMfaToken(""); setMfaCode(""); setServerError(""); }} className="mt-4 w-full text-center text-[13px] font-black text-[#a94d09] hover:text-[#6f2d05]">
+                Back to sign in
+              </button>
+            </form>
+          ) : (
           <form className="rounded-[14px] border border-[#ead8c9] bg-white/82 p-5 shadow-[0_22px_55px_rgba(74,42,22,0.13)] backdrop-blur-md sm:p-6"
             noValidate onSubmit={handleSubmit}
           >
@@ -168,6 +234,7 @@ function Adminlogin({ onAdminLogin }) {
               <ArrowRight size={20} strokeWidth={2.6} />
             </button>
           </form>
+          )}
 
           <p className="mt-5 text-center text-[13px] font-medium text-[#817167]">
             Need access? Contact the store owner or system administrator.

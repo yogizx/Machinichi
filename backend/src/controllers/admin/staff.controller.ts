@@ -27,7 +27,7 @@ import {
   permissionsHeldBy,
   runAtomic,
 } from '../../services/rbac.service';
-import { generateTotpSecret, encryptSecret, decryptSecret, findTotpStep, buildOtpAuthUrl, generateRecoveryCodes } from '../../services/mfa.service';
+import { generateTotpSecret, encryptSecret, decryptSecret, findTotpStep, findTotpSkewSteps, buildOtpAuthUrl, generateRecoveryCodes } from '../../services/mfa.service';
 import { sendStaffInvitationEmail, sendPasswordResetEmail } from '../../services/email.service';
 import { validateStaffPassword } from '../../services/passwordPolicy';
 
@@ -48,6 +48,8 @@ const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]
 const isDuplicateKey = (err: any): boolean => err?.code === 11000;
 const actorOf = (req: AuthRequest): ActorContext => ({ userId: req.user!.userId, role: req.user!.role });
 const clientUrl = (): string => process.env.CLIENT_URL || 'http://localhost:5173';
+const humanizeSeconds = (s: number): string =>
+  s < 90 ? `${s} seconds` : s < 5400 ? `${Math.round(s / 60)} minutes` : `${(s / 3600).toFixed(1)} hours`;
 const isProduction = (): boolean => process.env.NODE_ENV === 'production';
 
 const permissionDefByKey = new Map(PERMISSIONS.map((p) => [p.key, p]));
@@ -1051,8 +1053,23 @@ export const completeActivation = async (req: AuthRequest, res: Response) => {
   if (!user || !user.mfa?.pendingSecretEnc) return sendError(res, EXPIRED, 400);
   if (user.accessExpiry && user.accessExpiry.getTime() <= now.getTime()) return sendError(res, 'Access for this account has already expired.', 400);
 
-  const step = findTotpStep(decryptSecret(user.mfa.pendingSecretEnc), code);
+  const totpSecret = decryptSecret(user.mfa.pendingSecretEnc);
+  const step = findTotpStep(totpSecret, code);
   if (step === null) {
+    // The code is wrong for the server's current time. If it would have been RIGHT at another time, the clock of
+    // the server and the phone disagree - say so instead of the misleading "code is not correct". This never
+    // accepts the code, and (because it needs the real code) it is not counted as a failed guess.
+    const skew = findTotpSkewSteps(totpSecret, code);
+    if (skew !== null) {
+      const seconds = Math.abs(skew) * 30;
+      await recordAudit({ actorId: user._id as any, action: 'mfa.enrollment_clock_skew', module: 'admin', outcome: 'failure', metadata: { skewSeconds: skew * 30 }, req });
+      return res.status(400).json({
+        success: false,
+        code: 'CLOCK_SKEW',
+        skewSeconds: skew * 30,
+        message: `Your code is valid, but the clock of the server is about ${humanizeSeconds(seconds)} ${skew > 0 ? 'behind' : 'ahead of'} your phone, so it cannot be accepted. Set the date and time of the computer running the server to automatic (sync it), then enter a fresh code.`,
+      });
+    }
     const after = await AdminInvitation.findOneAndUpdate({ _id: inv._id, status: 'in_progress' }, { $inc: { setupAttempts: 1 } }, { new: true });
     if (after && (after.setupAttempts || 0) >= MAX_SETUP_ATTEMPTS) {
       await AdminInvitation.updateOne({ _id: inv._id }, { $set: { status: 'expired' } });

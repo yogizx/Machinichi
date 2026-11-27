@@ -90,6 +90,25 @@ export function findTotpStep(secretB32: string, code: string, now = Date.now(), 
   return matched;
 }
 
+/**
+ * DIAGNOSTIC ONLY - never used to authenticate anyone.
+ * When a code is rejected, reports whether it WOULD have been right at another moment, i.e. whether the server
+ * clock and the phone clock disagree. Returns the offset in 30-second steps (positive = the phone is ahead of
+ * the server, so the server's clock is behind), or null when no offset within +/-maxSteps explains the code.
+ * The caller has already tried the normal +/-1 step window, so the search starts at 2.
+ */
+export function findTotpSkewSteps(secretB32: string, code: string, now = Date.now(), maxSteps = 720): number | null {
+  if (!/^\d{6}$/.test(code)) return null;
+  const secret = base32Decode(secretB32);
+  const center = currentStep(now);
+  let found: number | null = null;
+  for (let d = 2; d <= maxSteps && found === null; d++) {
+    if (safeEqual(hotp(secret, center + d), code)) found = d;
+    else if (safeEqual(hotp(secret, center - d), code)) found = -d;
+  }
+  return found;
+}
+
 export const buildOtpAuthUrl = (secretB32: string, account: string, issuer = 'Machinichi'): string =>
   `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}` +
   `?secret=${secretB32}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=${TOTP_DIGITS}&period=${TOTP_STEP_SECONDS}`;

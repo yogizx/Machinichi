@@ -73,6 +73,11 @@ api.interceptors.response.use(
         return Promise.reject(error);
       }
     }
+    // The server refused this action: the permissions shown in the UI may be out of date. Ask the permission
+    // context to reload them from the server (it throttles itself).
+    if (error.response?.status === 403 && error.response?.data?.code === "FORBIDDEN") {
+      window.dispatchEvent(new Event("permissions-stale"));
+    }
     return Promise.reject(error);
   }
 );
